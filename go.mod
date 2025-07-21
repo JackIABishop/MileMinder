@@ -1,4 +1,4 @@
-module github.com/jackbishop/mileage-cli
+module github.com/jackbishop/mileminder
 
 go 1.24.2
 

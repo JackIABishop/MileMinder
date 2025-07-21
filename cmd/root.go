@@ -11,11 +11,11 @@ import (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "mileage",
+	Use:   "MileMinder",
 	Short: "Track PCP mileage allowance via CLI",
-	Long: `mileage is a CLI tool to help drivers track their odometer readings
+	Long: `MileMinder is a CLI tool to help drivers track their odometer readings
 against a linear annual mileage allowance (e.g., for PCP or insurance plans).
-It stores per-vehicle history in YAML under ~/.mileage-cli/ and provides status,
+It stores per-vehicle history in YAML under ~/.mileminder/ and provides status,
 warnings, and fleet summaries.`,
 }
 
@@ -33,7 +33,7 @@ func init() {
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
 
-	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.mileage-cli.yaml)")
+	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.mileminder.yaml)")
 
 	rootCmd.PersistentFlags().StringP("car", "c", "", "Vehicle ID (default for all commands)")
 

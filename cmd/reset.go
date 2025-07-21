@@ -26,9 +26,9 @@ var resetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		filePath := filepath.Join(home, ".mileage-cli", carID+".yml")
+		filePath := filepath.Join(home, ".mileminder", carID+".yml")
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			fmt.Printf("Vehicle %q not found; have you run `mileage init`?\n", carID)
+			fmt.Printf("Vehicle %q not found; have you run `mileminder init`?\n", carID)
 			return nil
 		}
 		reader := bufio.NewReader(os.Stdin)

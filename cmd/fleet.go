@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jackbishop/mileage-cli/internal/model"
+	"github.com/jackbishop/mileminder/internal/model"
 )
 
 // fleetCmd represents the fleet command
@@ -25,11 +25,11 @@ var fleetCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("unable to find home directory: %w", err)
 		}
-		dir := filepath.Join(home, ".mileage-cli")
+		dir := filepath.Join(home, ".mileminder")
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Println("No vehicles found. Have you run `mileage init`?")
+				fmt.Println("No vehicles found. Have you run `mileminder init`?")
 				return nil
 			}
 			return err

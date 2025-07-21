@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jackbishop/mileage-cli/internal/model"
+	"github.com/jackbishop/mileminder/internal/model"
 )
 
 var addCmd = &cobra.Command{
@@ -46,7 +46,7 @@ var addCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		filePath := filepath.Join(home, ".mileage-cli", carID+".yml")
+		filePath := filepath.Join(home, ".mileminder", carID+".yml")
 		raw, err := os.ReadFile(filePath)
 		if err != nil {
 			return err

@@ -22,7 +22,7 @@ var switchCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("unable to find home directory: %w", err)
 		}
-		dir := filepath.Join(home, ".mileage-cli")
+		dir := filepath.Join(home, ".mileminder")
 		filePath := filepath.Join(dir, vehicleID+".yml")
 
 		// Ensure the YAML file exists

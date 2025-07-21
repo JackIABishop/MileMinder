@@ -7,12 +7,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jackbishop/mileage-cli/cmd"
+	"github.com/jackbishop/mileminder/cmd"
 )
 
 func configDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".mileage-cli")
+	return filepath.Join(home, ".mileminder")
 }
 
 func main() {

@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jackbishop/mileage-cli/internal/model"
+	"github.com/jackbishop/mileminder/internal/model"
 )
 
 // statusCmd represents the status command
@@ -30,7 +30,7 @@ var statusCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			data, err := os.ReadFile(filepath.Join(home, ".mileage-cli", "current"))
+			data, err := os.ReadFile(filepath.Join(home, ".mileminder", "current"))
 			if err != nil {
 				return fmt.Errorf("no vehicle specified and no default set; use --car or switch")
 			}
@@ -42,7 +42,7 @@ var statusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		filePath := filepath.Join(home, ".mileage-cli", carID+".yml")
+		filePath := filepath.Join(home, ".mileminder", carID+".yml")
 		raw, err := os.ReadFile(filePath)
 		if err != nil {
 			return err

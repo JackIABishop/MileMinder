@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jackbishop/mileage-cli/internal/model"
+	"github.com/jackbishop/mileminder/internal/model"
 )
 
 // initCmd represents the init command
@@ -89,7 +89,7 @@ var initCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		dir := filepath.Join(home, ".mileage-cli")
+		dir := filepath.Join(home, ".mileminder")
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}

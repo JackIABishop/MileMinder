@@ -1,4 +1,4 @@
-# Mileage CLI — Requirements Draft
+# MileMinder CLI
 
 ## 1 Purpose
 CLI tool for individual drivers to track odometer readings against the linear annual-mileage allowance of a PCP plan (or similar insurance caps).
@@ -18,7 +18,7 @@ CLI tool for individual drivers to track odometer readings against the linear an
 | **Slack/Delta** | `target_today – miles_used` (≤ 0 ⇒ under quota).                           |
 
 ## 4 Data Storage (YAML)
-* Directory: `~/.mileage-cli/`
+* Directory: `~/.mileminder/`
 * **One file per vehicle** → git-friendly.
 
 ```yaml
@@ -34,13 +34,13 @@ readings:
 ```
 ## 5 CLI Commands
 ```
-mileage init   --car <id>
-mileage add    <miles> [--date YYYY-MM-DD] [--car <id>]
-mileage status                [--car <id>] [--plot]
-mileage cars
-mileage switch <id>
-mileage fleet
-mileage reset  --car <id>
+mileminder init   --car <id>
+mileminder add    <miles> [--date YYYY-MM-DD] [--car <id>]
+mileminder status                [--car <id>] [--plot]
+mileminder cars
+mileminder switch <id>
+mileminder fleet
+mileminder reset  --car <id>
 ```
 
 ## 6 Computation

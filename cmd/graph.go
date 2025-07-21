@@ -11,12 +11,12 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jackbishop/mileage-cli/internal/model"
+	"github.com/jackbishop/mileminder/internal/model"
 )
 
 var graphCmd = &cobra.Command{
 	Use:   "graph",
-	Short: "ASCII graph of actual vs. ideal mileage over time",
+	Short: "ASCII graph of actual vs. ideal mileminder over time",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Determine vehicle ID
 		carID, _ := cmd.Flags().GetString("car")
@@ -25,7 +25,7 @@ var graphCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			data, err := os.ReadFile(filepath.Join(home, ".mileage-cli", "current"))
+			data, err := os.ReadFile(filepath.Join(home, ".mileminder", "current"))
 			if err != nil {
 				return fmt.Errorf("no vehicle specified and no default set; use --car or switch")
 			}
@@ -37,7 +37,7 @@ var graphCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		raw, err := os.ReadFile(filepath.Join(home, ".mileage-cli", carID+".yml"))
+		raw, err := os.ReadFile(filepath.Join(home, ".mileminder", carID+".yml"))
 		if err != nil {
 			return err
 		}
