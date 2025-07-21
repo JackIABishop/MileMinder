@@ -1,4 +1,4 @@
-# Mileage CLI — Requirements Draft
+# Mileage CLI
 
 ## 1 Purpose
 CLI tool for individual drivers to track odometer readings against the linear annual-mileage allowance of a PCP plan (or similar insurance caps).
