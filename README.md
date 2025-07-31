@@ -1,80 +1,68 @@
-# MileMinder CLI
+# MileMinder 🚗⚡
+[![Go](https://img.shields.io/badge/go-1.22+-00ADD8?logo=go)](https://go.dev)
+[![License](https://img.shields.io/github/license/JackIABishop/mileminder)](LICENSE)
 
-## 1 Purpose
-CLI tool for individual drivers to track odometer readings against the linear annual-mileage allowance of a PCP plan (or similar insurance caps).
+Tiny CLI to keep your PCP / insurance mileage allowance on track — no spreadsheets, no drama.
 
-## 2 Scope
-* **Single user** running locally.
-* **Multiple vehicles** supported; one active at a time.
-* **Command-line only**—no GUI, no network APIs.
-* Runs on macOS, Linux, Windows.
+## ✨ Features
+- **`init`** – set term dates, start odo & yearly cap  
+- **`add`** – upsert today’s odometer reading  
+- **`status`** – see delta vs ideal line (year & term left)  
+- **`graph`** – ASCII chart of actual vs ideal miles  
+- Fleet commands: `cars`, `switch`, `fleet`, `reset`
 
-## 3 Definitions
-| Term            | Meaning                                                                    |
-|-----------------|----------------------------------------------------------------------------|
-| **Vehicle ID**  | Friendly name or registration (string).                                    |
-| **Plan**        | `start date`, `end date`, `annual_allowance` (mi), `start_miles`.          |
-| **Reading**     | `date` (ISO 8601, Europe/London) + `miles` (int). One per day (upsert).    |
-| **Slack/Delta** | `target_today – miles_used` (≤ 0 ⇒ under quota).                           |
+## 🚀 Installation
+```bash
+go install github.com/jackiabishop/mileminder@latest
+# add GOPATH/bin to $PATH if needed
+```
 
-## 4 Data Storage (YAML)
-* Directory: `~/.mileminder/`
-* **One file per vehicle** → git-friendly.
+## 🏃 Quick-start
+```bash
+mileminder init --car my3LR         # interactive wizard
+mileminder add 15321                # log today's odometer
+mileminder status                   # usage snapshot
+mileminder graph                    # ascii chart
+```
 
+## 📸 Status Output (example)
+```
+📅 31 Jul 2025  | 🚗 Tesla Model 3
+──────────────────────────────────────────────────
+Actual Odo:     902 mi
+Target Today:   1150 mi
+Delta:          -255 mi  ✅ (78%)
+
+Year left:      324 d   8 857 mi
+Term left:      3y 324d  38 884 mi
+Usage:   |████████░░| 78%
+```
+
+
+## 🔧 Configuration
+YAML lives per-car under ~/.mileminder/:
 ```yaml
-vehicle: my3LR
+vehicle: tesla_model_3
 plan:
   start: 2024-04-15
   end:   2028-04-14
   annual_allowance: 10000
-  start_miles: 123
+  start_miles: 7
 readings:
-  "2024-04-15": 123
-  "2025-07-20": 15321   # UPSERT same-day
-```
-## 5 CLI Commands
-```
-mileminder init   --car <id>
-mileminder add    <miles> [--date YYYY-MM-DD] [--car <id>]
-mileminder status                [--car <id>] [--plot]
-mileminder cars
-mileminder switch <id>
-mileminder fleet
-mileminder reset  --car <id>
+    "2025-07-20": 600
+    "2025-07-21": 623
+    "2025-07-26": 702
+    "2025-07-31": 902
 ```
 
-## 6 Computation
-```
-days_elapsed = today − plan.start
-target_today = plan.start_miles + plan.annual_allowance × (days_elapsed / 365)
-miles_used   = latest_miles − plan.start_miles
-delta        = target_today − miles_used
-```
+## 💙 Contributing  
+PRs, issues, and feature ideas are welcome!  
+Open an issue, submit a PR, or drop me an email at **hello@jackbishop.co**.
 
-## 7 Status Output (example)
-```
-📅 20 Jul 2025 | 🚗 my3LR
-──────────────────────────────────────────────
-Actual Odo:     15 321 mi
-Target Today:   14 880 mi
-Delta:          +441 mi  ⚠️ (3 % over)
+## ☕️ Support  
 
-Year left:      165 d   1 843 mi
-Term left:      2 y 80 d   11 214 mi
-Progress: |███████░░░| 55 %
-──────────────────────────────────────────────
-```
+If MileMinder saves you mileage-overage fees,  
+[**buy me a coffee**](https://buymeacoffee.com/jackbishop) — caffeine → more late-night commits!
 
-## 8 Error Handling
-• Reading must be numeric and ≥ previous (unless --force).
-• Graceful messages for missing car, invalid dates, etc.
-
-## 9 Dependencies
-• Go ≥ 1.22
-• gopkg.in/yaml.v3
-
-## 10 Future Nice-To-Haves
-• SQLite backend for large fleets
-• CSV/JSON export
-• Web/API dashboard
-• Kilometre-unit toggle
+## 📜 License  
+Released under the [MIT License](LICENSE).
