@@ -56,13 +56,11 @@ readings:
 ```
 
 ## 💙 Contributing  
-PRs, issues, and feature ideas are welcome!  
-Open an issue, submit a PR, or drop me an email at **hello@jackbishop.co**.
+PRs, issues, and feature ideas are welcome! Open an issue, submit a PR, or drop me an email at **hello@jackbishop.co**.
 
 ## ☕️ Support  
 
-If MileMinder saves you mileage-overage fees,  
-[**buy me a coffee**](https://buymeacoffee.com/jackbishop) — caffeine → more late-night commits!
+If MileMinder saves you mileage-overage fees, [**buy me a coffee**](https://buymeacoffee.com/jackbishop) — caffeine → more late-night commits!
 
 ## 📜 License  
 Released under the [MIT License](LICENSE).
