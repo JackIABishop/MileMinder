@@ -11,7 +11,7 @@ import (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "MileMinder",
+	Use:   "mileminder",
 	Short: "Track PCP mileage allowance via CLI",
 	Long: `MileMinder is a CLI tool to help drivers track their odometer readings
 against a linear annual mileage allowance (e.g., for PCP or insurance plans).
