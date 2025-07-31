@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/jackbishop/mileminder/internal/model"
+	"github.com/jackiabishop/mileminder/internal/model"
 )
 
 // initCmd represents the init command

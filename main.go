@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jackbishop/mileminder/cmd"
+	"github.com/jackiabishop/mileminder/cmd"
 )
 
 func configDir() string {

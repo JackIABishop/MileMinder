@@ -1,4 +1,4 @@
-module github.com/jackbishop/mileminder
+module github.com/jackiabishop/mileminder
 
 go 1.24.2
 
