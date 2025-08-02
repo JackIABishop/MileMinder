@@ -1,8 +1,8 @@
-# MileMinder 🚗⚡
+# MileMinder 🚗
 [![Go](https://img.shields.io/badge/go-1.22+-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/github/license/JackIABishop/MileMinder)](LICENSE)
 
-Tiny CLI to keep your PCP / insurance mileage allowance on track — no spreadsheets, no drama.
+Tiny CLI to keep your PCP / insurance mileage allowance on track — no spreadsheets required.
 
 ## ✨ Features
 - **`init`** – set term dates, start odo & yearly cap  
