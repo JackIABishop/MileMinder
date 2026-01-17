@@ -1,0 +1,3 @@
+# This directory contains the built web UI assets.
+# Run 'cd web && npm run build' to populate it.
+# The built files are embedded into the Go binary.

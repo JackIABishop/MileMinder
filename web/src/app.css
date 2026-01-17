@@ -1,0 +1,137 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	html {
+		font-family: 'Outfit', system-ui, sans-serif;
+	}
+
+	body {
+		@apply bg-carbon-950 text-carbon-100 min-h-screen;
+		background-image: 
+			radial-gradient(ellipse at top, rgba(96, 165, 250, 0.03) 0%, transparent 50%),
+			radial-gradient(ellipse at bottom right, rgba(167, 139, 250, 0.02) 0%, transparent 50%);
+	}
+
+	/* Custom scrollbar */
+	::-webkit-scrollbar {
+		width: 8px;
+		height: 8px;
+	}
+
+	::-webkit-scrollbar-track {
+		@apply bg-carbon-900;
+	}
+
+	::-webkit-scrollbar-thumb {
+		@apply bg-carbon-700 rounded-full;
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		@apply bg-carbon-600;
+	}
+}
+
+@layer components {
+	.card {
+		@apply bg-carbon-900/60 backdrop-blur-sm border border-carbon-800 rounded-2xl p-6;
+	}
+
+	.card-hover {
+		@apply card transition-all duration-300 hover:border-accent-primary/30 hover:shadow-glow;
+	}
+
+	.btn {
+		@apply px-4 py-2 rounded-lg font-medium transition-all duration-200;
+	}
+
+	.btn-primary {
+		@apply btn bg-accent-primary text-carbon-950 hover:bg-accent-primary/90 hover:shadow-glow;
+	}
+
+	.btn-secondary {
+		@apply btn bg-carbon-800 text-carbon-100 hover:bg-carbon-700 border border-carbon-700;
+	}
+
+	.btn-ghost {
+		@apply btn bg-transparent text-carbon-300 hover:text-carbon-100 hover:bg-carbon-800/50;
+	}
+
+	.input {
+		@apply w-full px-4 py-3 bg-carbon-800/50 border border-carbon-700 rounded-lg 
+		       text-carbon-100 placeholder-carbon-500
+		       focus:outline-none focus:border-accent-primary focus:ring-1 focus:ring-accent-primary/50
+		       transition-all duration-200;
+	}
+
+	.label {
+		@apply block text-sm font-medium text-carbon-400 mb-2;
+	}
+
+	/* Gauge styles */
+	.gauge-ring {
+		fill: none;
+		stroke-linecap: round;
+		transform: rotate(-90deg);
+		transform-origin: center;
+	}
+
+	.gauge-bg {
+		@apply stroke-carbon-800;
+	}
+
+	.gauge-fill-green {
+		stroke: #22c55e;
+		filter: drop-shadow(0 0 8px rgba(34, 197, 94, 0.5));
+	}
+
+	.gauge-fill-amber {
+		stroke: #f59e0b;
+		filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.5));
+	}
+
+	.gauge-fill-red {
+		stroke: #ef4444;
+		filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.5));
+	}
+
+	/* Status colors */
+	.status-good {
+		@apply text-gauge-green;
+	}
+
+	.status-warning {
+		@apply text-gauge-amber;
+	}
+
+	.status-danger {
+		@apply text-gauge-red;
+	}
+
+	/* Number animations */
+	.number-display {
+		@apply font-mono text-4xl font-bold tracking-tight;
+	}
+
+	.number-unit {
+		@apply text-lg font-normal text-carbon-400 ml-1;
+	}
+
+	/* Navigation */
+	.nav-link {
+		@apply flex items-center gap-3 px-4 py-3 rounded-xl text-carbon-400 
+		       transition-all duration-200 hover:text-carbon-100 hover:bg-carbon-800/50;
+	}
+
+	.nav-link.active {
+		@apply text-accent-primary bg-accent-primary/10;
+	}
+}
+
+/* Animation delays for staggered entrance */
+.stagger-1 { animation-delay: 0.1s; }
+.stagger-2 { animation-delay: 0.2s; }
+.stagger-3 { animation-delay: 0.3s; }
+.stagger-4 { animation-delay: 0.4s; }
+.stagger-5 { animation-delay: 0.5s; }
