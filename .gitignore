@@ -1,0 +1,33 @@
+# Binaries
+mileminder
+*.exe
+*.dll
+*.so
+*.dylib
+
+# IDE / Editor
+.cursor/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Go
+*.test
+*.out
+coverage.txt
+
+# Node / Web
+web/node_modules/
+web/.svelte-kit/
+web/dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
