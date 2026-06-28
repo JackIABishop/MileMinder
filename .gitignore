@@ -18,6 +18,10 @@ mileminder
 *.out
 coverage.txt
 
+# Python
+.venv/
+__pycache__/
+
 # Node / Web
 web/node_modules/
 web/.svelte-kit/
