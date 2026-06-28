@@ -120,12 +120,33 @@
 					color={status.daily_rate > (status.annual_allowance / 365) ? 'amber' : 'green'}
 				/>
 				
-				<StatCard 
-					title="Annual Allowance" 
-					value={formatNumber(status.annual_allowance)} 
+				<StatCard
+					title="Annual Allowance"
+					value={formatNumber(status.annual_allowance)}
 					unit="mi"
 					subtitle="{formatNumber(Math.round(status.annual_allowance / 365))} mi/day ideal"
 				/>
+
+				<!-- Average annual mileage: lifetime average (for insurance) + recent pace -->
+				<div class="col-span-2 card animate-slide-up">
+					<h3 class="text-sm font-medium text-carbon-400 mb-3">Average Annual Mileage</h3>
+					<div class="flex items-end justify-between gap-4">
+						<div>
+							<div class="flex items-baseline gap-1">
+								<span class="number-display text-carbon-100">{formatNumber(Math.round(status.avg_annual_mileage))}</span>
+								<span class="number-unit">mi/yr</span>
+							</div>
+							<p class="mt-1 text-xs text-carbon-500">Lifetime average — quote this for insurance</p>
+						</div>
+						<div class="text-right">
+							<div class="flex items-baseline gap-1 justify-end">
+								<span class="font-mono text-xl font-semibold text-carbon-300">{formatNumber(Math.round(status.recent_annual_mileage))}</span>
+								<span class="text-sm text-carbon-500">mi/yr</span>
+							</div>
+							<p class="mt-1 text-xs text-carbon-500">Last 90 days</p>
+						</div>
+					</div>
+				</div>
 			</div>
 		</div>
 
