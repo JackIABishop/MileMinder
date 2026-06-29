@@ -11,11 +11,11 @@ make build        # build web UI then Go binary -> ./mileminder
 make build-web    # cd web && npm install && npm run build, then copy web/dist -> internal/web/dist
 make build-go     # go build -o mileminder .
 make install      # go mod download + npm install
-make test         # go test ./...   (no Go test files exist yet)
+make test         # go test ./...   (the suite lives in internal/calc)
 make clean        # remove binary, web/dist, web/node_modules, web/.svelte-kit, internal/web/dist/*
 ```
 
-Run a single Go test once tests exist: `go test ./internal/api -run TestName`.
+Run the calc tests directly: `go test ./internal/calc`. Run a single test: `go test ./internal/calc -run TestName`.
 
 ### Running the app
 ```bash
@@ -40,10 +40,11 @@ go build -o mileminder .
 
 ## Architecture
 
-Three layers share one data model but **do not share calculation code**:
+The layers share one data model **and one calculation package** — `internal/calc` is the single source of truth for the status/projection/pace math; both `internal/api/` and `cmd/` delegate to it:
 
-- **`cmd/`** — Cobra CLI. Each command is its own file (`add`, `status`, `graph`, `fleet`, `cars`, `switch`, `init`, `reset`, `serve`). `serve` is the bridge to the web layer. CLI commands read/write YAML directly and have their own copies of the status math.
-- **`internal/api/`** — HTTP layer. `router.go` wires a stdlib `http.ServeMux` (Go 1.22 method+path patterns like `GET /api/vehicles/{id}`) with CORS and an SPA fallback handler (unknown paths serve `index.html` for client-side routing). `handlers.go` holds all endpoint logic **and `computeStatus()`**, the canonical status/projection calculator.
+- **`internal/calc/`** — the canonical status/projection/pace calculator. `calc.ComputeStatus(...)` produces all status figures, `calc.OdometerAt(...)` is the shared interpolation primitive, and `calc.AllowanceMiles(...)` is the shared allowance-line primitive (`annual_allowance * daysElapsed / 365`). The `Status` result type lives here too; `api.VehicleStatus` is a type alias for it. **Do not reintroduce a private copy of this math anywhere** — both other layers must call into `internal/calc`.
+- **`cmd/`** — Cobra CLI. Each command is its own file (`add`, `status`, `graph`, `fleet`, `cars`, `switch`, `init`, `reset`, `serve`). `serve` is the bridge to the web layer. CLI commands read/write YAML directly but delegate all status math to `internal/calc`.
+- **`internal/api/`** — HTTP layer. `router.go` wires a stdlib `http.ServeMux` (Go 1.22 method+path patterns like `GET /api/vehicles/{id}`) with CORS and an SPA fallback handler (unknown paths serve `index.html` for client-side routing). `handlers.go` holds all endpoint logic and delegates status math to `calc.ComputeStatus` (the graph handler's ideal line uses `calc.AllowanceMiles`).
 - **`web/`** — SvelteKit SPA (`@sveltejs/adapter-static`), Tailwind, Chart.js. `src/lib/api.ts` is the typed API client; its interfaces mirror the Go JSON structs. Routes under `src/routes/` (dashboard `+page.svelte`, `graph/`, `add/`, `history/`, `fleet/`, `settings/`).
 
 **Data store:** plain YAML files in `~/.mileminder/`, one per vehicle (`<id>.yml`, where the filename is the vehicle id). A `current` file holds the default vehicle id. There is no database. `internal/model/model.go` defines the shape: a `Plan` (start, end, annual_allowance, start_miles) plus `Readings` as a `map["YYYY-MM-DD"]int` of odometer values. `loadVehicle`/`saveVehicle` exist independently in both `cmd/` and `internal/api/` — changes to persistence may need updating in both.
@@ -51,13 +52,13 @@ Three layers share one data model but **do not share calculation code**:
 ### Calculation model (the heart of the app)
 "Miles used" is always relative to `start_miles`. The **ideal/allowance line** is `annual_allowance * daysElapsed / 365` from plan start — a straight line in real time. Status compares actual miles-driven against this line (`delta`, `percent_used`).
 
-`computeStatus()` in `handlers.go` is the source of truth and produces several distinct pace figures — keep them straight:
-- **`daily_rate`** ("current pace"): miles over the *current allowance year only*. Computed by interpolating the odometer exactly at the year boundary via `odometerAt()` so pre-year driving doesn't leak in. Drives the year-end projection.
+`calc.ComputeStatus()` in `internal/calc/calc.go` is the source of truth and produces several distinct pace figures — keep them straight:
+- **`daily_rate`** ("current pace"): miles over the *current allowance year only*. Computed by interpolating the odometer exactly at the year boundary via `calc.OdometerAt()` so pre-year driving doesn't leak in. Drives the year-end projection.
 - **`avg_annual_mileage`**: lifetime miles since plan start, annualised — the stable figure to quote for insurance.
 - **`recent_annual_mileage`**: trailing 90-day pace, annualised.
 - **Allowance "years" / segments**: a plan spans multiple 1-year segments from the plan start date (not calendar years); `segmentStart`/`segmentEnd` logic recurs across status, year-left, and projection calculations.
 
-`odometerAt(readings, date)` (linear interpolation between bracketing readings, clamped at the ends) is the shared primitive behind the year-boundary pace and the 90-day window. Reuse it for any "odometer at an arbitrary date" need.
+`calc.OdometerAt(readings, date)` (linear interpolation between bracketing readings, clamped at the ends) is the shared primitive behind the year-boundary pace and the 90-day window. Reuse it for any "odometer at an arbitrary date" need. The public `calc.ComputeStatus` wraps an unexported core that takes an injected `now` — `internal/calc/calc_test.go` drives it with a fixed clock for deterministic assertions.
 
 The **graph** uses a real time x-axis (Chart.js time scale via `chartjs-adapter-date-fns`), not per-reading spacing — readings sit at their true dates so slope reflects real time. The allowance and projection lines are sampled weekly so a nearest-on-x tooltip can read off any date.
 
@@ -67,4 +68,4 @@ The **graph** uses a real time x-axis (Chart.js time scale via `chartjs-adapter-
 
 ## Conventions
 
-Conventional commits (`feat:`, `fix:`, `chore:`, `refactor:`). Wrap Go errors with context (`fmt.Errorf(... %w)`). The repo currently has **no Go tests** — `computeStatus`/`odometerAt` are prime candidates if adding coverage.
+Conventional commits (`feat:`, `fix:`, `chore:`, `refactor:`). Wrap Go errors with context (`fmt.Errorf(... %w)`). Go tests live in `internal/calc/calc_test.go` (`go test ./internal/calc`) and cover `OdometerAt`, the year-boundary `daily_rate`, and `ComputeStatus` across under/over/on-pace/new-plan cases — extend them when you touch the calculation.

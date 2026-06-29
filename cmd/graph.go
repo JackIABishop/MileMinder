@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/jackiabishop/mileminder/internal/calc"
 	"github.com/jackiabishop/mileminder/internal/model"
 )
 
@@ -55,8 +56,6 @@ var graphCmd = &cobra.Command{
 
 		var actuals []float64
 		var ideals []float64
-		start := v.Plan.Start
-		annual := float64(v.Plan.AnnualAllowance)
 		// Use relative usage (miles driven since plan start)
 		baseMiles := float64(v.Plan.StartMiles)
 
@@ -64,12 +63,7 @@ var graphCmd = &cobra.Command{
 			t, _ := time.Parse("2006-01-02", ds)
 			miles := float64(v.Readings[ds]) - baseMiles
 			actuals = append(actuals, miles)
-			daysElapsed := t.Sub(start).Hours() / 24.0
-			if daysElapsed < 0 {
-				daysElapsed = 0
-			}
-			ideal := annual * daysElapsed / 365.0
-			ideals = append(ideals, ideal)
+			ideals = append(ideals, calc.AllowanceMiles(v.Plan.AnnualAllowance, v.Plan.Start, t))
 		}
 
 		// Combine into one graph, plotting actuals and ideals

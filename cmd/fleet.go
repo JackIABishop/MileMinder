@@ -8,11 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/jackiabishop/mileminder/internal/calc"
 	"github.com/jackiabishop/mileminder/internal/model"
 )
 
@@ -35,7 +35,6 @@ var fleetCmd = &cobra.Command{
 			return err
 		}
 
-		today := time.Now()
 		fmt.Printf("%-12s %-8s %-10s %-7s %s\n", "Vehicle", "Odometer", "Delta(mi)", "%Used", "TermLeft")
 		for _, e := range entries {
 			if e.IsDir() {
@@ -56,37 +55,13 @@ var fleetCmd = &cobra.Command{
 				return err
 			}
 
-			// Determine latest reading
-			latest := 0
-			for _, m := range data.Readings {
-				if m > latest {
-					latest = m
-				}
-			}
-
-			// Compute metrics
-			daysElapsed := int(today.Sub(data.Plan.Start).Hours() / 24)
-			if daysElapsed < 0 {
-				daysElapsed = 0
-			}
-			allowedToday := float64(data.Plan.AnnualAllowance) * float64(daysElapsed) / 365.0
-			milesUsed := float64(latest - data.Plan.StartMiles)
-			delta := allowedToday - milesUsed
-			var percent float64
-			if allowedToday > 0 {
-				percent = milesUsed / allowedToday * 100.0
-			}
-
-			termDays := int(data.Plan.End.Sub(today).Hours() / 24)
-			if termDays < 0 {
-				termDays = 0
-			}
-			yearsLeft := termDays / 365
-			daysLeft := termDays % 365
-			termLeft := fmt.Sprintf("%dy %dd", yearsLeft, daysLeft)
+			// Canonical status math lives in internal/calc. Note delta is
+			// positive when over budget (matches the web dashboard).
+			s := calc.ComputeStatus(id, &data)
+			termLeft := fmt.Sprintf("%dy %dd", s.YearsLeftTerm, s.DaysLeftTerm)
 
 			fmt.Printf("%-12s %-8d %+10.0f %7.1f%% %s\n",
-				id, latest, delta, percent, termLeft)
+				id, s.LatestReading, s.Delta, s.PercentUsed, termLeft)
 		}
 		return nil
 	},
