@@ -22,6 +22,8 @@ export interface VehicleStatus {
 	miles_left_term: number;
 	years_left_term: number;
 	daily_rate: number;
+	avg_annual_mileage: number;
+	recent_annual_mileage: number;
 	projected_end: number;
 	projected_over: boolean;
 	plan_start: string;

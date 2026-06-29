@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { getCurrentVehicle, getVehicle, getGraphData, formatNumber, formatDate, type VehicleStatus, type GraphData } from '$lib/api';
 	import { Chart, registerables } from 'chart.js';
+	import 'chartjs-adapter-date-fns';
 
 	Chart.register(...registerables);
 
@@ -11,6 +12,8 @@
 	let error = '';
 	let chartCanvas: HTMLCanvasElement;
 	let chart: Chart | null = null;
+	let showProjection = false;
+	let showYears = false;
 
 	onMount(async () => {
 		try {
@@ -31,58 +34,188 @@
 		renderChart();
 	}
 
+	const DAY_MS = 24 * 60 * 60 * 1000;
+
+	// Whole days between two dates (positive if b is after a)
+	function daysBetween(a: Date, b: Date): number {
+		return (b.getTime() - a.getTime()) / DAY_MS;
+	}
+
+	// Ideal miles accrued by a given date: straight line from plan start.
+	function idealAt(date: Date, start: Date, annual: number): number {
+		const days = Math.max(0, daysBetween(start, date));
+		return (annual * days) / 365;
+	}
+
+	// Sample a line into weekly points so it stays hoverable at any date
+	// (a two-point line has nothing to snap to between its ends). Weekly
+	// spacing is independent of plan length, so hover resolution is consistent.
+	function sampleLine(fromMs: number, toMs: number, yAtMs: (ms: number) => number) {
+		const stepMs = 7 * DAY_MS;
+		const points: { x: number; y: number }[] = [];
+		for (let t = fromMs; t < toMs; t += stepMs) {
+			points.push({ x: t, y: yAtMs(t) });
+		}
+		points.push({ x: toMs, y: yAtMs(toMs) });
+		return points;
+	}
+
 	async function renderChart() {
-		if (!graphData || !chartCanvas) return;
+		if (!graphData || !status || !chartCanvas) return;
 
 		// Destroy existing chart if any
 		if (chart) {
 			chart.destroy();
+			chart = null;
 		}
 
 		const ctx = chartCanvas.getContext('2d');
 		if (!ctx) return;
 
-		// Format dates for display
-		const labels = graphData.dates.map(d => {
-			const date = new Date(d);
-			return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-		});
+		const start = new Date(status.plan_start);
+		const end = new Date(status.plan_end);
+		const today = new Date();
+		const annual = status.annual_allowance;
+
+		// Right edge of the time axis: today, or the plan end when projecting.
+		const axisMax = showProjection ? end : today;
+
+		// Allowance-year intervals (start → start+1yr …), capped at the plan end.
+		const yearIntervals: { start: number; end: number; index: number }[] = [];
+		{
+			let b = new Date(start);
+			let idx = 0;
+			while (b.getTime() < end.getTime()) {
+				const next = new Date(b);
+				next.setFullYear(next.getFullYear() + 1);
+				yearIntervals.push({
+					start: b.getTime(),
+					end: Math.min(next.getTime(), end.getTime()),
+					index: idx
+				});
+				b = next;
+				idx++;
+			}
+		}
+
+		// Inline plugin: shade alternating allowance years, draw boundary lines
+		// and "Year N" labels. Gated on the showYears toggle.
+		const yearBandsPlugin = {
+			id: 'yearBands',
+			beforeDatasetsDraw(c: Chart) {
+				if (!showYears) return;
+				const { ctx, chartArea, scales } = c;
+				const xs = scales.x;
+				ctx.save();
+				ctx.fillStyle = 'rgba(96, 165, 250, 0.06)';
+				for (const iv of yearIntervals) {
+					if (iv.index % 2 !== 0) continue;
+					const l = Math.max(xs.getPixelForValue(iv.start), chartArea.left);
+					const r = Math.min(xs.getPixelForValue(iv.end), chartArea.right);
+					if (r > l) ctx.fillRect(l, chartArea.top, r - l, chartArea.bottom - chartArea.top);
+				}
+				ctx.restore();
+			},
+			afterDatasetsDraw(c: Chart) {
+				if (!showYears) return;
+				const { ctx, chartArea, scales } = c;
+				const xs = scales.x;
+				ctx.save();
+				// Boundary lines (skip the first — it sits on the axis edge).
+				ctx.strokeStyle = 'rgba(146, 146, 159, 0.35)';
+				ctx.lineWidth = 1;
+				ctx.setLineDash([2, 4]);
+				for (const iv of yearIntervals) {
+					if (iv.index === 0) continue;
+					const px = xs.getPixelForValue(iv.start);
+					if (px < chartArea.left || px > chartArea.right) continue;
+					ctx.beginPath();
+					ctx.moveTo(px, chartArea.top);
+					ctx.lineTo(px, chartArea.bottom);
+					ctx.stroke();
+				}
+				ctx.setLineDash([]);
+				// Year labels, centred in the visible portion of each band.
+				ctx.fillStyle = '#91919f';
+				ctx.font = '11px Outfit, sans-serif';
+				ctx.textAlign = 'center';
+				ctx.textBaseline = 'top';
+				for (const iv of yearIntervals) {
+					const l = Math.max(xs.getPixelForValue(iv.start), chartArea.left);
+					const r = Math.min(xs.getPixelForValue(iv.end), chartArea.right);
+					if (r - l < 36) continue;
+					ctx.fillText(`Year ${iv.index + 1}`, (l + r) / 2, chartArea.top + 4);
+				}
+				ctx.restore();
+			}
+		};
+
+		// Actual readings plotted at their true dates (miles since plan start).
+		const actualPoints = graphData.dates.map((d, i) => ({
+			x: new Date(d).getTime(),
+			y: graphData!.actuals[i]
+		}));
+
+		// Ideal allowance line: a straight line from (start, 0) to the axis edge,
+		// sampled weekly so it can be hovered at any date.
+		const idealPoints = sampleLine(start.getTime(), axisMax.getTime(), (ms) =>
+			idealAt(new Date(ms), start, annual)
+		);
+
+		const datasets: any[] = [
+			{
+				label: 'Actual Miles',
+				data: actualPoints,
+				borderColor: '#22c55e',
+				backgroundColor: 'rgba(34, 197, 94, 0.1)',
+				fill: true,
+				tension: 0.3,
+				pointBackgroundColor: '#22c55e',
+				pointBorderColor: '#22c55e',
+				pointRadius: 4,
+				pointHoverRadius: 6
+			},
+			{
+				label: 'Allowance Limit',
+				data: idealPoints,
+				borderColor: '#60a5fa',
+				backgroundColor: 'transparent',
+				borderDash: [5, 5],
+				pointRadius: 0,
+				pointHoverRadius: 4
+			}
+		];
+
+		// Projection: extend the last reading to plan end at the current daily
+		// rate, sampled weekly so each future date is hoverable.
+		if (showProjection && graphData.dates.length > 0) {
+			const lastDate = new Date(graphData.dates[graphData.dates.length - 1]);
+			const lastY = graphData.actuals[graphData.actuals.length - 1];
+			const rate = status.daily_rate;
+			datasets.push({
+				label: 'Projected',
+				data: sampleLine(lastDate.getTime(), end.getTime(), (ms) =>
+					lastY + rate * ((ms - lastDate.getTime()) / DAY_MS)
+				),
+				borderColor: status.projected_over ? '#ef4444' : '#f59e0b',
+				backgroundColor: 'transparent',
+				borderDash: [3, 3],
+				pointRadius: 0,
+				pointHoverRadius: 4
+			});
+		}
 
 		chart = new Chart(ctx, {
 			type: 'line',
-			data: {
-				labels,
-				datasets: [
-					{
-						label: 'Actual Miles',
-						data: graphData.actuals,
-						borderColor: '#22c55e',
-						backgroundColor: 'rgba(34, 197, 94, 0.1)',
-						fill: true,
-						tension: 0.3,
-						pointBackgroundColor: '#22c55e',
-						pointBorderColor: '#22c55e',
-						pointRadius: 4,
-						pointHoverRadius: 6
-					},
-					{
-						label: 'Allowance Limit',
-						data: graphData.ideals,
-						borderColor: '#60a5fa',
-						backgroundColor: 'transparent',
-						borderDash: [5, 5],
-						tension: 0.1,
-						pointRadius: 0,
-						pointHoverRadius: 4
-					}
-				]
-			},
+			data: { datasets },
+			plugins: [yearBandsPlugin],
 			options: {
 				responsive: true,
 				maintainAspectRatio: false,
 				interaction: {
 					intersect: false,
-					mode: 'index'
+					mode: 'nearest',
+					axis: 'x'
 				},
 				plugins: {
 					legend: {
@@ -111,14 +244,48 @@
 							family: 'JetBrains Mono'
 						},
 						callbacks: {
+							title: function(items) {
+								if (!items.length) return '';
+								return new Date(items[0].parsed.x).toLocaleDateString('en-GB', {
+									day: '2-digit',
+									month: 'short',
+									year: 'numeric'
+								});
+							},
 							label: function(context) {
 								return `${context.dataset.label}: ${formatNumber(Math.round(context.parsed.y))} mi`;
+							},
+							// For an actual/projected point, also show the allowance at
+							// that date and how far above/below the line it sits.
+							afterBody: function(items) {
+								if (!items.length) return [];
+								const item = items[0];
+								if (item.dataset.label === 'Allowance Limit') return [];
+								const date = new Date(item.parsed.x);
+								const allowance = idealAt(date, start, annual);
+								const diff = item.parsed.y - allowance;
+								const sign = diff >= 0 ? '+' : '';
+								return [
+									`Allowance: ${formatNumber(Math.round(allowance))} mi`,
+									`${sign}${formatNumber(Math.round(diff))} mi vs allowance`
+								];
 							}
 						}
 					}
 				},
 				scales: {
 					x: {
+						type: 'time',
+						min: start.getTime(),
+						max: axisMax.getTime(),
+						time: {
+							tooltipFormat: 'dd MMM yyyy',
+							displayFormats: {
+								day: 'dd MMM',
+								week: 'dd MMM',
+								month: 'MMM yyyy'
+							}
+						},
 						grid: {
 							color: 'rgba(66, 66, 75, 0.3)'
 						},
@@ -130,6 +297,7 @@
 						}
 					},
 					y: {
+						beginAtZero: true,
 						grid: {
 							color: 'rgba(66, 66, 75, 0.3)'
 						},
@@ -198,9 +366,29 @@
 		<div class="card animate-slide-up stagger-2">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-lg font-semibold text-carbon-100">{status.vehicle || status.id}</h2>
-				<p class="text-sm text-carbon-500">
-					{formatDate(status.plan_start)} → {formatDate(status.plan_end)}
-				</p>
+				<div class="flex items-center gap-4">
+					<label class="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer select-none">
+						<input
+							type="checkbox"
+							bind:checked={showYears}
+							on:change={renderChart}
+							class="accent-accent-primary"
+						/>
+						Highlight plan years
+					</label>
+					<label class="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer select-none">
+						<input
+							type="checkbox"
+							bind:checked={showProjection}
+							on:change={renderChart}
+							class="accent-accent-primary"
+						/>
+						Project to plan end
+					</label>
+					<p class="text-sm text-carbon-500">
+						{formatDate(status.plan_start)} → {formatDate(status.plan_end)}
+					</p>
+				</div>
 			</div>
 			<div class="h-[400px]">
 				<canvas bind:this={chartCanvas}></canvas>
