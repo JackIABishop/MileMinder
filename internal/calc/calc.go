@@ -37,6 +37,31 @@ type Status struct {
 	AnnualAllowance     int       `json:"annual_allowance"`
 	StartMiles          int       `json:"start_miles"`
 	IsDefault           bool      `json:"is_default"`
+
+	// Renewal countdown + final-mileage estimate (#3). DaysToEnd is the total
+	// days until the plan ends — distinct from DaysLeftTerm, which is the
+	// remainder after whole years. EstimatedFinalMileage projects the odometer
+	// at plan end at the current daily pace.
+	DaysToEnd             int     `json:"days_to_end"`
+	EstimatedFinalMileage float64 `json:"estimated_final_mileage"`
+
+	// Drivable-rate budget (#4): the safe miles/day you can drive for the rest
+	// of the plan and still finish within the total term allowance. A capacity
+	// figure (remaining allowed miles ÷ remaining days), not a pace projection.
+	DrivableDailyRate float64 `json:"drivable_daily_rate"`
+
+	// Overage cost estimate (#5). ExcessRate mirrors plan.ExcessRate (pence per
+	// excess mile). ProjectedExcessMiles is how far the projected final mileage
+	// exceeds the total term allowance; ProjectedOverageCost is the £ penalty,
+	// populated only when an excess rate is set.
+	ExcessRate           int     `json:"excess_rate,omitempty"`
+	ProjectedExcessMiles float64 `json:"projected_excess_miles"`
+	ProjectedOverageCost float64 `json:"projected_overage_cost,omitempty"`
+
+	// Trend signal (#7): recent (90-day) annual pace vs lifetime average.
+	// PaceTrend classifies the delta as accelerating / easing / steady.
+	PaceTrendDelta float64 `json:"pace_trend_delta"`
+	PaceTrend      string  `json:"pace_trend"`
 }
 
 // DatedReading is a single odometer reading with a parsed date.
@@ -213,6 +238,49 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 	daysLeft := int(math.Mod(termDays, 365.0))
 	milesLeftTerm := float64(data.Plan.AnnualAllowance) * termDays / 365.0
 
+	// Renewal countdown + final-mileage estimate (#3). daysToEnd is the whole
+	// countdown to plan end; the final-mileage estimate continues from the
+	// latest reading at the current daily pace.
+	daysToEnd := int(math.Ceil(termDays))
+	estimatedFinalMileage := float64(latestMiles) + dailyRate*termDays
+
+	// Drivable-rate budget (#4): how many miles/day you can still drive for the
+	// rest of the plan and finish within the total term allowance. Capacity, not
+	// pace: (total term allowance − miles already used) ÷ days remaining.
+	totalTermDays := data.Plan.End.Sub(data.Plan.Start).Hours() / 24.0
+	totalTermAllowanceMiles := float64(data.Plan.AnnualAllowance) * totalTermDays / 365.0
+	drivableDailyRate := 0.0
+	if termDays >= 1 {
+		drivableDailyRate = (totalTermAllowanceMiles - milesUsed) / termDays
+		if drivableDailyRate < 0 {
+			drivableDailyRate = 0
+		}
+	}
+
+	// Overage cost estimate (#5): how far the projected final mileage overshoots
+	// the total term allowance, and the £ penalty at the plan's excess rate.
+	projectedMilesDriven := estimatedFinalMileage - float64(data.Plan.StartMiles)
+	projectedExcessMiles := projectedMilesDriven - totalTermAllowanceMiles
+	if projectedExcessMiles < 0 {
+		projectedExcessMiles = 0
+	}
+	projectedOverageCost := 0.0
+	if data.Plan.ExcessRate > 0 {
+		projectedOverageCost = projectedExcessMiles * float64(data.Plan.ExcessRate) / 100.0
+	}
+
+	// Trend signal (#7): recent 90-day annual pace vs the lifetime average.
+	paceTrendDelta := recentAnnualMileage - avgAnnualMileage
+	paceTrend := "steady"
+	if avgAnnualMileage > 0 {
+		threshold := avgAnnualMileage * 0.05
+		if paceTrendDelta > threshold {
+			paceTrend = "accelerating"
+		} else if paceTrendDelta < -threshold {
+			paceTrend = "easing"
+		}
+	}
+
 	return Status{
 		ID:                  id,
 		Vehicle:             data.Vehicle,
@@ -235,5 +303,14 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 		PlanEnd:             data.Plan.End,
 		AnnualAllowance:     data.Plan.AnnualAllowance,
 		StartMiles:          data.Plan.StartMiles,
+
+		DaysToEnd:             daysToEnd,
+		EstimatedFinalMileage: estimatedFinalMileage,
+		DrivableDailyRate:     drivableDailyRate,
+		ExcessRate:            data.Plan.ExcessRate,
+		ProjectedExcessMiles:  projectedExcessMiles,
+		ProjectedOverageCost:  projectedOverageCost,
+		PaceTrendDelta:        paceTrendDelta,
+		PaceTrend:             paceTrend,
 	}
 }
