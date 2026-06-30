@@ -56,7 +56,7 @@ type Status struct {
 	// populated only when an excess rate is set.
 	ExcessRate           int     `json:"excess_rate,omitempty"`
 	ProjectedExcessMiles float64 `json:"projected_excess_miles"`
-	ProjectedOverageCost float64 `json:"projected_overage_cost,omitempty"`
+	ProjectedOverageCost float64 `json:"projected_overage_cost"`
 
 	// Trend signal (#7): recent (90-day) annual pace vs lifetime average.
 	// PaceTrend classifies the delta as accelerating / easing / steady.

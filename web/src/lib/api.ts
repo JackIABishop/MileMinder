@@ -36,10 +36,11 @@ export interface VehicleStatus {
 	estimated_final_mileage: number;
 	// Drivable-rate budget (#4)
 	drivable_daily_rate: number;
-	// Overage cost estimate (#5) — excess_rate/overage_cost omitted from JSON when 0
+	// Overage cost estimate (#5) — excess_rate omitted from JSON when 0 (no rate set);
+	// the projected figures are always present (cost is 0 without a rate).
 	excess_rate?: number;
 	projected_excess_miles: number;
-	projected_overage_cost?: number;
+	projected_overage_cost: number;
 	// Trend signal (#7)
 	pace_trend_delta: number;
 	pace_trend: string;
