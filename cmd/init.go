@@ -72,6 +72,8 @@ var initCmd = &cobra.Command{
 			return err
 		}
 
+		excessRate, _ := cmd.Flags().GetInt("excess-rate")
+
 		data := model.VehicleData{
 			Vehicle: carID,
 			Plan: model.Plan{
@@ -79,6 +81,7 @@ var initCmd = &cobra.Command{
 				End:             endDate,
 				AnnualAllowance: annual,
 				StartMiles:      startMiles,
+				ExcessRate:      excessRate,
 			},
 			Readings: map[string]int{
 				startDate.Format("2006-01-02"): startMiles,
@@ -115,4 +118,5 @@ var initCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().StringP("car", "c", "", "Vehicle ID")
+	initCmd.Flags().Int("excess-rate", 0, "Excess mileage penalty in pence per mile over allowance (optional)")
 }

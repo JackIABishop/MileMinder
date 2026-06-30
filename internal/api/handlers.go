@@ -165,6 +165,7 @@ func HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 		EndDate         string `json:"end_date"`
 		AnnualAllowance int    `json:"annual_allowance"`
 		StartMiles      int    `json:"start_miles"`
+		ExcessRate      int    `json:"excess_rate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -189,6 +190,7 @@ func HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 			End:             endDate,
 			AnnualAllowance: req.AnnualAllowance,
 			StartMiles:      req.StartMiles,
+			ExcessRate:      req.ExcessRate,
 		},
 		Readings: map[string]int{
 			req.StartDate: req.StartMiles,
@@ -203,6 +205,50 @@ func HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"status": "created", "id": req.ID})
+}
+
+// HandleUpdatePlan applies a partial update to a vehicle's plan. Only the fields
+// present in the request body are changed; everything else is preserved. Today
+// this exists primarily so an excess_rate can be set on a vehicle that already
+// exists (it can't only be settable at creation time).
+func HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "vehicle ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Pointer fields so an omitted key leaves the existing value untouched
+	// (rather than zeroing it).
+	var req struct {
+		ExcessRate *int `json:"excess_rate"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	data, err := loadVehicle(id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	if req.ExcessRate != nil {
+		if *req.ExcessRate < 0 {
+			http.Error(w, "excess_rate must not be negative", http.StatusBadRequest)
+			return
+		}
+		data.Plan.ExcessRate = *req.ExcessRate
+	}
+
+	if err := saveVehicle(id, data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "updated", "id": id})
 }
 
 // HandleAddReading adds a new odometer reading

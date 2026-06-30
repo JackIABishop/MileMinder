@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { listVehicles, createVehicle, formatDate, type VehicleListItem } from '$lib/api';
+	import { listVehicles, createVehicle, getVehicle, updatePlan, formatDate, type VehicleListItem } from '$lib/api';
 
 	let vehicles: VehicleListItem[] = [];
 	let loading = true;
@@ -9,6 +9,10 @@
 	let showAddForm = false;
 	let submitting = false;
 
+	// Per-vehicle excess rate (pence/excess mile), loaded from each vehicle's status.
+	let excessRates: Record<string, number> = {};
+	let savingRate: Record<string, boolean> = {};
+
 	// New vehicle form
 	let newVehicle = {
 		id: '',
@@ -16,7 +20,8 @@
 		start_date: '',
 		end_date: '',
 		annual_allowance: 10000,
-		start_miles: 0
+		start_miles: 0,
+		excess_rate: 0
 	};
 
 	onMount(async () => {
@@ -27,10 +32,36 @@
 		loading = true;
 		try {
 			vehicles = await listVehicles();
+			// Pull each vehicle's current excess rate so the inline editor prefills.
+			const rates: Record<string, number> = {};
+			await Promise.all(
+				vehicles.map(async (v) => {
+					try {
+						const s = await getVehicle(v.id);
+						rates[v.id] = s.excess_rate ?? 0;
+					} catch {
+						rates[v.id] = 0;
+					}
+				})
+			);
+			excessRates = rates;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load vehicles';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function handleSaveRate(id: string) {
+		savingRate = { ...savingRate, [id]: true };
+		error = '';
+		try {
+			await updatePlan(id, { excess_rate: excessRates[id] });
+			success = `Excess rate updated for ${id}.`;
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to update excess rate';
+		} finally {
+			savingRate = { ...savingRate, [id]: false };
 		}
 	}
 
@@ -50,7 +81,8 @@
 				start_date: newVehicle.start_date,
 				end_date: newVehicle.end_date,
 				annual_allowance: newVehicle.annual_allowance,
-				start_miles: newVehicle.start_miles
+				start_miles: newVehicle.start_miles,
+				excess_rate: newVehicle.excess_rate
 			});
 			
 			success = `Vehicle "${newVehicle.vehicle || newVehicle.id}" created successfully!`;
@@ -61,7 +93,8 @@
 				start_date: '',
 				end_date: '',
 				annual_allowance: 10000,
-				start_miles: 0
+				start_miles: 0,
+				excess_rate: 0
 			};
 			await loadVehicles();
 		} catch (e) {
@@ -80,7 +113,8 @@
 			start_date: '',
 			end_date: '',
 			annual_allowance: 10000,
-			start_miles: 0
+			start_miles: 0,
+			excess_rate: 0
 		};
 	}
 </script>
@@ -129,23 +163,47 @@
 			{#if vehicles.length > 0}
 				<div class="space-y-3 mb-6">
 					{#each vehicles as vehicle}
-						<div class="card flex items-center justify-between animate-slide-up">
-							<div class="flex items-center gap-4">
-								<div class="w-10 h-10 rounded-lg bg-accent-primary/20 flex items-center justify-center">
-									<svg class="w-5 h-5 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-									</svg>
+						<div class="card animate-slide-up">
+							<div class="flex items-center justify-between">
+								<div class="flex items-center gap-4">
+									<div class="w-10 h-10 rounded-lg bg-accent-primary/20 flex items-center justify-center">
+										<svg class="w-5 h-5 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+										</svg>
+									</div>
+									<div>
+										<p class="font-medium text-carbon-100">{vehicle.vehicle || vehicle.id}</p>
+										<p class="text-sm text-carbon-500">{vehicle.id}</p>
+									</div>
 								</div>
-								<div>
-									<p class="font-medium text-carbon-100">{vehicle.vehicle || vehicle.id}</p>
-									<p class="text-sm text-carbon-500">{vehicle.id}</p>
-								</div>
+								{#if vehicle.is_default}
+									<span class="px-3 py-1 text-xs font-medium bg-accent-primary/20 text-accent-primary rounded-full">
+										Default
+									</span>
+								{/if}
 							</div>
-							{#if vehicle.is_default}
-								<span class="px-3 py-1 text-xs font-medium bg-accent-primary/20 text-accent-primary rounded-full">
-									Default
-								</span>
-							{/if}
+
+							<!-- Excess-rate editor (#5): settable on existing vehicles -->
+							<div class="mt-4 pt-4 border-t border-carbon-800 flex items-end gap-3">
+								<div class="flex-1">
+									<label for="rate-{vehicle.id}" class="label">Excess Rate (pence per mile over)</label>
+									<input
+										type="number"
+										id="rate-{vehicle.id}"
+										bind:value={excessRates[vehicle.id]}
+										class="input font-mono"
+										min="0"
+										placeholder="0"
+									/>
+								</div>
+								<button
+									class="btn-secondary"
+									on:click={() => handleSaveRate(vehicle.id)}
+									disabled={savingRate[vehicle.id]}
+								>
+									{savingRate[vehicle.id] ? 'Saving...' : 'Save'}
+								</button>
+							</div>
 						</div>
 					{/each}
 				</div>
@@ -244,6 +302,19 @@
 									required
 								/>
 							</div>
+						</div>
+
+						<div>
+							<label for="excessRate" class="label">Excess Rate (pence per mile over)</label>
+							<input
+								type="number"
+								id="excessRate"
+								bind:value={newVehicle.excess_rate}
+								class="input font-mono"
+								min="0"
+								placeholder="e.g., 10"
+							/>
+							<p class="text-xs text-carbon-500 mt-1">Optional — used to estimate the overage penalty if you exceed the allowance</p>
 						</div>
 
 						<div class="flex gap-3 pt-4">

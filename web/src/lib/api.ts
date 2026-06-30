@@ -31,6 +31,19 @@ export interface VehicleStatus {
 	annual_allowance: number;
 	start_miles: number;
 	is_default: boolean;
+	// Renewal countdown + final-mileage estimate (#3)
+	days_to_end: number;
+	estimated_final_mileage: number;
+	// Drivable-rate budget (#4)
+	drivable_daily_rate: number;
+	// Overage cost estimate (#5) — excess_rate omitted from JSON when 0 (no rate set);
+	// the projected figures are always present (cost is 0 without a rate).
+	excess_rate?: number;
+	projected_excess_miles: number;
+	projected_overage_cost: number;
+	// Trend signal (#7)
+	pace_trend_delta: number;
+	pace_trend: string;
 }
 
 export interface Reading {
@@ -51,6 +64,11 @@ export interface CreateVehicleRequest {
 	end_date: string;
 	annual_allowance: number;
 	start_miles: number;
+	excess_rate?: number;
+}
+
+export interface UpdatePlanRequest {
+	excess_rate?: number;
 }
 
 export interface AddReadingRequest {
@@ -88,6 +106,13 @@ export async function getVehicle(id: string): Promise<VehicleStatus> {
 export async function createVehicle(data: CreateVehicleRequest): Promise<{ status: string; id: string }> {
 	return fetchJSON(`${API_BASE}/vehicles`, {
 		method: 'POST',
+		body: JSON.stringify(data)
+	});
+}
+
+export async function updatePlan(id: string, data: UpdatePlanRequest): Promise<{ status: string; id: string }> {
+	return fetchJSON(`${API_BASE}/vehicles/${encodeURIComponent(id)}`, {
+		method: 'PATCH',
 		body: JSON.stringify(data)
 	});
 }
