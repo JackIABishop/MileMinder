@@ -214,3 +214,97 @@ func TestAllowanceMiles(t *testing.T) {
 		t.Errorf("one year: got %v, want %v", got, want)
 	}
 }
+
+func TestComputeFleetInsights(t *testing.T) {
+	now := date("2025-04-11") // 100 days after a 2025-01-01 start
+
+	// Build three vehicles via the real computeStatus core so the roll-up is
+	// tested against genuine Status values, not hand-faked numbers.
+	// allowance ≈ 2740 mi to date for a 10000 mi/yr plan.
+	under := computeStatus("under", vehicle("2025-01-01", "2028-01-01", 10000, 0, map[string]int{
+		"2025-01-01": 0,
+		"2025-04-11": 1500, // well under the line → negative delta
+	}), now)
+	// Big absolute delta in miles, but a generous 30000 mi/yr allowance keeps the
+	// *percentage* used modest — it must NOT be picked as worst offender.
+	bigMiles := computeStatus("bigmiles", vehicle("2025-01-01", "2028-01-01", 30000, 0, map[string]int{
+		"2025-01-01": 0,
+		"2025-04-11": 11000, // ~+2700 mi delta, but only ~134% of a large allowance
+	}), now)
+	// Small absolute delta, but a tiny 2000 mi/yr allowance makes it proportionally
+	// the worst — this is the expected worst offender (ranked by percent_used).
+	worst := computeStatus("worst", vehicle("2025-01-01", "2028-01-01", 2000, 0, map[string]int{
+		"2025-01-01": 0,
+		"2025-04-11": 1500, // ~+950 mi delta, but ~273% of a small allowance
+	}), now)
+
+	// Sanity-check the fixture intent: bigMiles has the larger absolute delta,
+	// worst has the larger percentage used.
+	if !(bigMiles.Delta > worst.Delta) {
+		t.Fatalf("fixture broken: want bigMiles.Delta(%v) > worst.Delta(%v)", bigMiles.Delta, worst.Delta)
+	}
+	if !(worst.PercentUsed > bigMiles.PercentUsed) {
+		t.Fatalf("fixture broken: want worst.PercentUsed(%v) > bigMiles.PercentUsed(%v)", worst.PercentUsed, bigMiles.PercentUsed)
+	}
+
+	fleet := []Status{under, bigMiles, worst}
+	got := ComputeFleetInsights(fleet)
+
+	if got.TotalVehicles != 3 {
+		t.Errorf("TotalVehicles = %d, want 3", got.TotalVehicles)
+	}
+	if got.CountOver != 2 || got.CountUnder != 1 {
+		t.Errorf("CountOver/CountUnder = %d/%d, want 2/1", got.CountOver, got.CountUnder)
+	}
+	wantNet := under.Delta + bigMiles.Delta + worst.Delta
+	if !almostEqual(got.NetDelta, wantNet) {
+		t.Errorf("NetDelta = %v, want %v", got.NetDelta, wantNet)
+	}
+	wantTotalAnnual := under.AvgAnnualMileage + bigMiles.AvgAnnualMileage + worst.AvgAnnualMileage
+	if !almostEqual(got.TotalAvgAnnualMileage, wantTotalAnnual) {
+		t.Errorf("TotalAvgAnnualMileage = %v, want %v", got.TotalAvgAnnualMileage, wantTotalAnnual)
+	}
+	wantAvgPct := (under.PercentUsed + bigMiles.PercentUsed + worst.PercentUsed) / 3.0
+	if !almostEqual(got.AvgPercentUsed, wantAvgPct) {
+		t.Errorf("AvgPercentUsed = %v, want %v", got.AvgPercentUsed, wantAvgPct)
+	}
+	// Ranked by percent_used, not absolute miles.
+	if got.WorstOffenderID != "worst" {
+		t.Errorf("WorstOffenderID = %q, want \"worst\" (ranking should be by percent_used, not miles)", got.WorstOffenderID)
+	}
+	if got.WorstOffenderVehicle != worst.Vehicle {
+		t.Errorf("WorstOffenderVehicle = %q, want %q", got.WorstOffenderVehicle, worst.Vehicle)
+	}
+}
+
+func TestComputeFleetInsights_SingleCar(t *testing.T) {
+	now := date("2025-04-11")
+	only := computeStatus("solo", vehicle("2025-01-01", "2028-01-01", 10000, 0, map[string]int{
+		"2025-01-01": 0,
+		"2025-04-11": 5000,
+	}), now)
+
+	got := ComputeFleetInsights([]Status{only})
+	if got.TotalVehicles != 1 {
+		t.Errorf("TotalVehicles = %d, want 1", got.TotalVehicles)
+	}
+	if got.WorstOffenderID != "solo" {
+		t.Errorf("WorstOffenderID = %q, want \"solo\" (a single car is trivially the worst)", got.WorstOffenderID)
+	}
+	if !almostEqual(got.AvgPercentUsed, only.PercentUsed) {
+		t.Errorf("AvgPercentUsed = %v, want %v", got.AvgPercentUsed, only.PercentUsed)
+	}
+}
+
+func TestComputeFleetInsights_Empty(t *testing.T) {
+	got := ComputeFleetInsights(nil)
+	if got.TotalVehicles != 0 {
+		t.Errorf("TotalVehicles = %d, want 0", got.TotalVehicles)
+	}
+	if got.WorstOffenderID != "" {
+		t.Errorf("WorstOffenderID = %q, want empty", got.WorstOffenderID)
+	}
+	if got.NetDelta != 0 || got.TotalAvgAnnualMileage != 0 || got.AvgPercentUsed != 0 {
+		t.Errorf("empty fleet should have zero sums, got %+v", got)
+	}
+}

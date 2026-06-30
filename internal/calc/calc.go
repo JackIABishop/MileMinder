@@ -39,6 +39,55 @@ type Status struct {
 	IsDefault           bool      `json:"is_default"`
 }
 
+// FleetInsights is a household-level roll-up derived purely from a slice of
+// already-computed Status values. It adds no new per-vehicle math — it only
+// composes calc outputs — so it stays consistent with ComputeStatus by
+// construction. JSON tags mirror the web/iOS API contract.
+type FleetInsights struct {
+	TotalVehicles         int     `json:"total_vehicles"`
+	CountOver             int     `json:"count_over"`               // cars with Delta > 0
+	CountUnder            int     `json:"count_under"`              // cars with Delta <= 0
+	NetDelta              float64 `json:"net_delta"`                // Σ Delta (miles; +ve = collectively over the allowance line)
+	TotalAvgAnnualMileage float64 `json:"total_avg_annual_mileage"` // Σ AvgAnnualMileage (household annualised miles)
+	AvgPercentUsed        float64 `json:"avg_percent_used"`         // fleet mean PercentUsed — comparative-pace baseline
+	WorstOffenderID       string  `json:"worst_offender_id"`        // id of the car with the highest PercentUsed ("" for an empty fleet)
+	WorstOffenderVehicle  string  `json:"worst_offender_vehicle"`   // that car's display name, for the UI headline
+}
+
+// ComputeFleetInsights aggregates a slice of per-vehicle statuses into a
+// household roll-up. "Worst offender" and comparative pace are ranked by
+// PercentUsed, which normalises across vehicles with different allowances. An
+// empty slice yields a zero-value result with an empty WorstOffenderID.
+func ComputeFleetInsights(statuses []Status) FleetInsights {
+	insights := FleetInsights{TotalVehicles: len(statuses)}
+	if len(statuses) == 0 {
+		return insights
+	}
+
+	worst := -1
+	var worstPct float64
+	var sumPct float64
+	for i, s := range statuses {
+		if s.Delta > 0 {
+			insights.CountOver++
+		} else {
+			insights.CountUnder++
+		}
+		insights.NetDelta += s.Delta
+		insights.TotalAvgAnnualMileage += s.AvgAnnualMileage
+		sumPct += s.PercentUsed
+		if worst < 0 || s.PercentUsed > worstPct {
+			worst = i
+			worstPct = s.PercentUsed
+		}
+	}
+
+	insights.AvgPercentUsed = sumPct / float64(len(statuses))
+	insights.WorstOffenderID = statuses[worst].ID
+	insights.WorstOffenderVehicle = statuses[worst].Vehicle
+	return insights
+}
+
 // DatedReading is a single odometer reading with a parsed date.
 type DatedReading struct {
 	Date  time.Time
