@@ -242,6 +242,28 @@ func TestRenewalCountdown(t *testing.T) {
 	}
 }
 
+// TestExpiredPlan locks the past-plan-end behaviour of the renewal/projection
+// figures: termDays is clamped at 0, so days_to_end never goes negative and the
+// final-mileage estimate never projects backward from the latest reading.
+func TestExpiredPlan(t *testing.T) {
+	now := date("2025-06-01") // five months after the plan ended
+	v := vehicle("2024-01-01", "2025-01-01", 10000, 0, map[string]int{
+		"2024-01-01": 0,
+		"2024-12-01": 12000,
+	})
+	s := computeStatus("expired", v, now)
+
+	if s.DaysToEnd != 0 {
+		t.Errorf("DaysToEnd = %d, want 0 once the plan has ended", s.DaysToEnd)
+	}
+	if !almostEqual(s.EstimatedFinalMileage, 12000) {
+		t.Errorf("EstimatedFinalMileage = %v, want the latest reading (12000), not a backward projection", s.EstimatedFinalMileage)
+	}
+	if s.DrivableDailyRate != 0 {
+		t.Errorf("DrivableDailyRate = %v, want 0 with no days left", s.DrivableDailyRate)
+	}
+}
+
 // TestDrivableDailyRate locks #4: the safe mi/day for the rest of the plan is a
 // capacity figure (remaining allowed miles ÷ remaining days), clamped to 0 once
 // you've already used the whole term allowance.
