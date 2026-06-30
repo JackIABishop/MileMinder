@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getCurrentVehicle, getVehicle, addReading, formatNumber, formatDate, getDeltaStatus, type VehicleStatus } from '$lib/api';
+	import { goto } from '$app/navigation';
+	import { getCurrentVehicle, getVehicle, listVehicles, addReading, formatNumber, formatDate, getDeltaStatus, type VehicleStatus } from '$lib/api';
 	import Gauge from '$lib/components/Gauge.svelte';
 	import StatCard from '$lib/components/StatCard.svelte';
 	import QuickAdd from '$lib/components/QuickAdd.svelte';
@@ -18,11 +19,23 @@
 		loading = true;
 		error = '';
 		try {
-			const current = await getCurrentVehicle();
-			if (current.current) {
+			const [current, vehicles] = await Promise.all([getCurrentVehicle(), listVehicles()]);
+			// A current pointer is only valid if it still resolves to a vehicle; a
+			// stale pointer (car since deleted) is treated as no default.
+			const hasDefault = !!current.current && vehicles.some((v) => v.id === current.current);
+
+			if (hasDefault) {
 				status = await getVehicle(current.current);
-			} else {
+			} else if (vehicles.length === 0) {
+				// No vehicles at all → onboarding/empty state.
 				error = 'No vehicle selected. Please add a vehicle first.';
+			} else if (vehicles.length === 1) {
+				// Exactly one car → just open it (no point routing to a one-row fleet).
+				status = await getVehicle(vehicles[0].id);
+			} else {
+				// Multiple cars and no default → land on the fleet overview.
+				await goto('/fleet');
+				return;
 			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load status';

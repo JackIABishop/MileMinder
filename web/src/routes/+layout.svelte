@@ -16,7 +16,10 @@
 		try {
 			vehicles = await listVehicles();
 			const current = await getCurrentVehicle();
-			currentVehicle = current.current || (vehicles.length > 0 ? vehicles[0].id : '');
+			// Ignore a stale current pointer (car since deleted) so the selector
+			// never shows a vehicle that no longer exists.
+			const valid = current.current && vehicles.some((v) => v.id === current.current);
+			currentVehicle = valid ? current.current : (vehicles.length > 0 ? vehicles[0].id : '');
 		} catch (e) {
 			console.error('Failed to load vehicles:', e);
 		}

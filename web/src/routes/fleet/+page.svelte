@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getFleet, setCurrentVehicle, formatNumber, formatDate, getStatusColor, type VehicleStatus } from '$lib/api';
+	import { getFleet, setCurrentVehicle, formatNumber, formatDate, type VehicleStatus, type FleetInsights } from '$lib/api';
 	import Gauge from '$lib/components/Gauge.svelte';
 
 	let fleet: VehicleStatus[] = [];
+	let insights: FleetInsights | null = null;
 	let loading = true;
 	let error = '';
+	let settingDefault = '';
 
 	onMount(async () => {
 		await loadFleet();
@@ -15,7 +17,10 @@
 		loading = true;
 		error = '';
 		try {
-			fleet = await getFleet();
+			const resp = await getFleet();
+			// Comparative pace: order by percent_used so the worst offender leads.
+			fleet = [...resp.vehicles].sort((a, b) => b.percent_used - a.percent_used);
+			insights = resp.insights;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load fleet';
 		} finally {
@@ -23,7 +28,8 @@
 		}
 	}
 
-	async function selectVehicle(id: string) {
+	// "View" — make this the active vehicle and open the dashboard.
+	async function viewVehicle(id: string) {
 		try {
 			await setCurrentVehicle(id);
 			window.location.href = '/';
@@ -32,9 +38,29 @@
 		}
 	}
 
+	// "Set as default" — set the default in place without leaving the fleet view.
+	async function setDefault(id: string) {
+		settingDefault = id;
+		try {
+			await setCurrentVehicle(id);
+			await loadFleet();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to set default';
+		} finally {
+			settingDefault = '';
+		}
+	}
+
 	function getTermString(status: VehicleStatus): string {
 		return `${status.years_left_term}y ${status.days_left_term}d`;
 	}
+
+	// Resolve the worst-offending vehicle (highest percent_used) for the callout.
+	$: worstVehicle = (() => {
+		const ins = insights;
+		if (!ins?.worst_offender_id) return undefined;
+		return fleet.find((v) => v.id === ins.worst_offender_id);
+	})();
 </script>
 
 <svelte:head>
@@ -65,33 +91,56 @@
 			<a href="/settings" class="btn-primary">Add Vehicle</a>
 		</div>
 	{:else}
-		<!-- Summary Stats -->
-		<div class="grid grid-cols-3 gap-4 mb-8">
-			<div class="card animate-slide-up">
-				<p class="text-sm text-carbon-400 mb-1">Total Vehicles</p>
-				<p class="text-3xl font-mono font-bold text-carbon-100">{fleet.length}</p>
+		<!-- Household roll-up -->
+		{#if insights}
+			<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+				<div class="card animate-slide-up">
+					<p class="text-sm text-carbon-400 mb-1">Household over/under</p>
+					<p class="text-3xl font-mono font-bold {insights.net_delta > 0 ? 'text-gauge-red' : 'text-gauge-green'}">
+						{insights.net_delta > 0 ? '+' : ''}{formatNumber(Math.round(insights.net_delta))}<span class="text-base text-carbon-500"> mi</span>
+					</p>
+					<p class="text-xs text-carbon-500 mt-1">
+						{insights.count_over} over · {insights.count_under} under
+					</p>
+				</div>
+				<div class="card animate-slide-up stagger-1">
+					<p class="text-sm text-carbon-400 mb-1">Total annual mileage</p>
+					<p class="text-3xl font-mono font-bold text-carbon-100">
+						{formatNumber(Math.round(insights.total_avg_annual_mileage))}<span class="text-base text-carbon-500"> mi/yr</span>
+					</p>
+					<p class="text-xs text-carbon-500 mt-1">Lifetime average, all cars</p>
+				</div>
+				<div class="card animate-slide-up stagger-2">
+					<p class="text-sm text-carbon-400 mb-1">Fleet avg pace</p>
+					<p class="text-3xl font-mono font-bold text-carbon-100">
+						{Math.round(insights.avg_percent_used)}<span class="text-base text-carbon-500">%</span>
+					</p>
+					<p class="text-xs text-carbon-500 mt-1">Mean allowance used</p>
+				</div>
+				<div class="card animate-slide-up stagger-3 {insights.net_delta > 0 ? 'border-gauge-red/30' : ''}">
+					<p class="text-sm text-carbon-400 mb-1">Worst offender</p>
+					{#if insights.worst_offender_id}
+						<p class="text-xl font-semibold text-carbon-100 truncate">
+							{insights.worst_offender_vehicle || insights.worst_offender_id}
+						</p>
+						{#if worstVehicle}
+							<p class="text-xs {worstVehicle.percent_used > 100 ? 'text-gauge-red' : 'text-carbon-500'} mt-1">
+								{Math.round(worstVehicle.percent_used)}% of allowance used
+							</p>
+						{/if}
+					{:else}
+						<p class="text-xl font-semibold text-carbon-300">—</p>
+					{/if}
+				</div>
 			</div>
-			<div class="card animate-slide-up stagger-1">
-				<p class="text-sm text-carbon-400 mb-1">Under Budget</p>
-				<p class="text-3xl font-mono font-bold text-gauge-green">
-					{fleet.filter(v => v.delta <= 0).length}
-				</p>
-			</div>
-			<div class="card animate-slide-up stagger-2">
-				<p class="text-sm text-carbon-400 mb-1">Over Budget</p>
-				<p class="text-3xl font-mono font-bold text-gauge-red">
-					{fleet.filter(v => v.delta > 0).length}
-				</p>
-			</div>
-		</div>
+		{/if}
 
-		<!-- Vehicle Cards -->
+		<!-- Vehicle Cards (ordered worst-pace first) -->
 		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-			{#each fleet as vehicle, i}
-				<button
-					class="card-hover text-left animate-slide-up relative"
-					style="animation-delay: {0.1 * (i + 3)}s"
-					on:click={() => selectVehicle(vehicle.id)}
+			{#each fleet as vehicle, i (vehicle.id)}
+				<div
+					class="card-hover relative animate-slide-up {insights && vehicle.id === insights.worst_offender_id ? 'border-gauge-red/40' : ''}"
+					style="animation-delay: {0.05 * (i + 1)}s"
 				>
 					{#if vehicle.is_default}
 						<div class="absolute top-4 right-4">
@@ -105,13 +154,13 @@
 						<Gauge percent={vehicle.percent_used} size={80} strokeWidth={6}>
 							<span class="text-sm font-mono font-bold">{Math.round(vehicle.percent_used)}%</span>
 						</Gauge>
-						
+
 						<div class="flex-1 min-w-0">
 							<h3 class="font-semibold text-lg text-carbon-100 truncate">
 								{vehicle.vehicle || vehicle.id}
 							</h3>
 							<p class="text-sm text-carbon-500">{vehicle.id}</p>
-							
+
 							<div class="mt-3 space-y-1">
 								<div class="flex justify-between text-sm">
 									<span class="text-carbon-400">Odometer</span>
@@ -131,13 +180,54 @@
 						</div>
 					</div>
 
-					<div class="mt-4 pt-4 border-t border-carbon-800">
+					<!-- Comparative pace vs the fleet average -->
+					{#if insights}
+						<div class="mt-4">
+							<div class="flex justify-between text-xs text-carbon-500 mb-1">
+								<span>Pace vs fleet avg</span>
+								<span class="font-mono {vehicle.percent_used > insights.avg_percent_used ? 'text-gauge-amber' : 'text-gauge-green'}">
+									{vehicle.percent_used >= insights.avg_percent_used ? '+' : ''}{Math.round(vehicle.percent_used - insights.avg_percent_used)}%
+								</span>
+							</div>
+							<div class="relative h-2 bg-carbon-800 rounded-full overflow-hidden">
+								<div
+									class="h-full rounded-full {vehicle.percent_used > 100 ? 'bg-gauge-red' : vehicle.percent_used > insights.avg_percent_used ? 'bg-gauge-amber' : 'bg-gauge-green'}"
+									style="width: {Math.min(100, vehicle.percent_used)}%"
+								></div>
+								<!-- fleet-average marker -->
+								<div
+									class="absolute top-0 h-2 w-0.5 bg-carbon-300"
+									style="left: {Math.min(100, insights.avg_percent_used)}%"
+									title="Fleet average"
+								></div>
+							</div>
+						</div>
+					{/if}
+
+					<div class="mt-4 pt-4 border-t border-carbon-800 flex items-center justify-between gap-3">
+						<button class="btn-primary text-sm" on:click={() => viewVehicle(vehicle.id)}>
+							View
+						</button>
+						{#if vehicle.is_default}
+							<span class="text-xs text-carbon-500">Default vehicle</span>
+						{:else}
+							<button
+								class="text-sm text-accent-primary hover:underline disabled:opacity-50"
+								on:click={() => setDefault(vehicle.id)}
+								disabled={settingDefault === vehicle.id}
+							>
+								{settingDefault === vehicle.id ? 'Setting…' : 'Set as default'}
+							</button>
+						{/if}
+					</div>
+
+					<div class="mt-3 pt-3 border-t border-carbon-800">
 						<div class="flex justify-between text-xs text-carbon-500">
 							<span>Plan: {formatDate(vehicle.plan_start)} → {formatDate(vehicle.plan_end)}</span>
 							<span>{formatNumber(vehicle.annual_allowance)} mi/yr</span>
 						</div>
 					</div>
-				</button>
+				</div>
 			{/each}
 		</div>
 	{/if}
