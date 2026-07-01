@@ -46,6 +46,24 @@ export interface VehicleStatus {
 	pace_trend: string;
 }
 
+// Household roll-up over all vehicles. Mirrors calc.FleetInsights (Go).
+// "Worst offender" and comparative pace are ranked by percent_used.
+export interface FleetInsights {
+	total_vehicles: number;
+	count_over: number;
+	count_under: number;
+	net_delta: number; // miles; +ve = household collectively over the allowance line
+	total_avg_annual_mileage: number;
+	avg_percent_used: number;
+	worst_offender_id: string; // "" when there are no vehicles
+	worst_offender_vehicle: string;
+}
+
+export interface FleetResponse {
+	vehicles: VehicleStatus[];
+	insights: FleetInsights;
+}
+
 export interface Reading {
 	date: string;
 	miles: number;
@@ -153,8 +171,8 @@ export async function setCurrentVehicle(id: string): Promise<{ status: string; c
 }
 
 // Fleet
-export async function getFleet(): Promise<VehicleStatus[]> {
-	return fetchJSON<VehicleStatus[]>(`${API_BASE}/fleet`);
+export async function getFleet(): Promise<FleetResponse> {
+	return fetchJSON<FleetResponse>(`${API_BASE}/fleet`);
 }
 
 // Export CSV (returns download URL)

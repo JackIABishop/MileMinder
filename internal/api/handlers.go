@@ -72,6 +72,13 @@ type VehicleListItem struct {
 // and JSON contract unchanged.
 type VehicleStatus = calc.Status
 
+// FleetResponse is the GET /api/fleet envelope: the per-vehicle statuses plus a
+// household roll-up derived from those same statuses (see calc.ComputeFleetInsights).
+type FleetResponse struct {
+	Vehicles []VehicleStatus    `json:"vehicles"`
+	Insights calc.FleetInsights `json:"insights"`
+}
+
 // Reading represents a single odometer reading
 type Reading struct {
 	Date  string `json:"date"`
@@ -464,10 +471,15 @@ func HandleFleet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Always serialise an empty array (not null) for Vehicles so the shape is
+	// stable for clients.
+	fleet := []VehicleStatus{}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			json.NewEncoder(w).Encode([]VehicleStatus{})
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(FleetResponse{Vehicles: fleet, Insights: calc.ComputeFleetInsights(fleet)})
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -480,7 +492,6 @@ func HandleFleet(w http.ResponseWriter, r *http.Request) {
 		defaultID = strings.TrimSpace(string(data))
 	}
 
-	var fleet []VehicleStatus
 	for _, e := range entries {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".yml" {
 			continue
@@ -495,8 +506,13 @@ func HandleFleet(w http.ResponseWriter, r *http.Request) {
 		fleet = append(fleet, status)
 	}
 
+	resp := FleetResponse{
+		Vehicles: fleet,
+		Insights: calc.ComputeFleetInsights(fleet),
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(fleet)
+	json.NewEncoder(w).Encode(resp)
 }
 
 // HandleExportCSV exports readings as CSV
