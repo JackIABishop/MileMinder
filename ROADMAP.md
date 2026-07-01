@@ -9,13 +9,27 @@ committed scope — it's a thinking surface. Edit freely.
 Today MileMinder is a **local, single-user** Go CLI + embedded SvelteKit web
 dashboard, storing YAML files in `~/.mileminder/`.
 
-The intended direction is a **hosted, multi-user product**: people log in, and a
-native **iPhone app** plus the existing web UI both talk to a shared
-**MileMinder API**. Alerts are delivered through a real channel (email first,
+The intended direction is a **local-first, multi-user product** with an optional
+hosted layer. **Guiding principle: the app works fully offline — the device is the
+source of truth, and you never need a connection to log a reading or see your
+status.** (You use this standing next to the car, sometimes with no signal — an
+app that needed the network to save an odometer number would be unusable there.)
+A native **iPhone app** holds its own on-device store; a shared **MileMinder API**
++ web dashboard are an *optional* sync, backup, and web-access layer — not required
+for the app to work. Alerts are delivered through a real channel (email first,
 push later) so users find out *before* they blow their allowance.
 
-The self-hosted single-user mode (binary with embedded SPA) should survive as a
-deployment tier, not be thrown away.
+Two consequences of offline-first, decided early because they shape the build:
+- **Calculation runs on-device.** The same `internal/calc` engine is reused on iOS
+  (via `gomobile`), never reimplemented in Swift — so there stays one source of
+  truth for the math (server, CLI, and app), not the three-way divergence Phase 0
+  killed. Keeping `internal/calc` pure and dependency-free is what makes this work.
+- **Sync is deliberately simple.** The data is tiny and append-mostly (readings
+  keyed by date), so **last-write-wins per record** is sufficient — no CRDTs, no
+  heavy sync framework.
+
+The self-hosted single-user mode (binary with embedded SPA) survives as a
+deployment tier; the CLI is already local-first by nature.
 
 ## Why rearchitecture is required
 
@@ -26,8 +40,10 @@ Three things in the current code specifically block the hosted/multi-client goal
    identity, per-user isolation, and a real datastore.
 2. **Duplicated calculation, API not the source of truth.** `cmd/` carries its
    own copies of the status math; `computeStatus()` lives in
-   `internal/api/handlers.go`. With a web SPA *and* an iOS app as clients, the
-   calculation must live in one package the API owns.
+   `internal/api/handlers.go`. With a web SPA, the CLI, *and* an on-device iOS app
+   (offline use means the math can't be server-only) all needing it, the
+   calculation must live in one pure package reused everywhere — the server, and
+   the iOS app via `gomobile`.
 3. **No auth, no API versioning, no contract stability.** Open CORS, unversioned
    `/api/vehicles/...`, embedded-SPA-on-localhost. A mobile client needs a
    versioned, stable, authenticated contract.
@@ -42,10 +58,10 @@ the TS client), the SvelteKit SPA (becomes one API client), and the embed mode
 |---|---|---|---|
 | **0** | Extract `internal/calc` (or `internal/core`) as the single source of truth for `computeStatus`/`odometerAt`/projection. Both `cmd/` and `internal/api/` call it. | Low | Highest-leverage move; valuable even if hosting never ships. Do first. |
 | **1** | Storage interface (repository pattern) behind today's YAML impl. Handlers stop calling `loadVehicle`/`saveVehicle` directly. | Low | No behaviour change. Unblocks swapping the backend. |
-| **2** | Identity + auth (token/session; password or OAuth / Sign in with Apple) + per-user scoping. Introduce `/api/v1`. | Medium | Defines the public contract the iOS app will depend on. |
-| **3** | Swap storage impl to Postgres or SQLite-per-user; stateless server for horizontal scale. | Medium | Repository interface from Phase 1 makes this localised. |
-| **4** | Background scheduler + notification-channel abstraction. Periodic "recompute projection, fire if threshold crossed." Ship **email** first. | Medium | New infra: a job runner. Channel is abstracted so push slots in later. |
-| **5** | Native iOS client against the public API. Add **APNs push** as a notification channel. | High | Web + iOS are peer clients of the same API. |
+| **2** | Identity + auth (token/session; password or Sign in with Apple) + per-user scoping. Introduce `/api/v1`. | Medium | **Auth gates sync/web only — the app works offline with no account; you sign in solely to enable sync, backup, and web access. No forced signup.** Defines the contract the iOS client syncs against. |
+| **3** | Server storage impl → managed **Postgres, multi-tenant**. This is the **sync/backup + web-read store**, *not* the app's primary store (the device is). Stateless server. | Medium | Repository interface from Phase 1 makes this localised. |
+| **4** | Background scheduler + notification-channel abstraction. Periodic "recompute projection, fire if threshold crossed." Ship **email** first. | Medium | New infra: a job runner. Channel is abstracted so push slots in later. Runs server-side against synced data. |
+| **5** | Native iOS client: **local on-device store**, `internal/calc` reused via **`gomobile`**, **last-write-wins sync** to the Postgres backend, APNs push. Fully usable offline; syncs when connected. | High | The local-first payoff. Own-store↔Postgres sync (not CloudKit) so web + iOS share one dataset. |
 
 ## Feature backlog
 
@@ -86,15 +102,16 @@ Direction — not final scope, but it anchors the Phase 2/3 decisions.
 that generic fuel/mileage-log apps don't serve. The value story is direct: the app
 costs less than a single over-mileage penalty charge.
 
-**Data & hosting.** The hosted path is chosen (web dashboard *and* sharing both
-need a backend). Datastore: a single **managed Postgres** (Neon / Supabase / Fly)
-with **row-level multi-tenancy** (a `user_id` on every row). The data is tiny, so
+**Data & hosting — local-first.** The app is **offline-first: the device is the
+source of truth** and needs no connection to work. The backend is an *optional*
+sync / backup / web-access layer. On the server, data lives in a single **managed
+Postgres** (Neon / Supabase / Fly) with **row-level multi-tenancy** (a `user_id`
+on every row) — the sync target and what the web dashboard reads. Data is tiny, so
 one small instance holds thousands of users and free tiers cover early growth at
-~£0. Host the single Go binary (embedded SPA) on Fly.io/Render alongside it. The
-Phase 1 storage interface keeps this swappable (SQLite/Turso later) — a low-regret
-bet. A local-first-on-device model with the backend as an optional sync layer is
-the zero-cost-per-user ideal, but adds sync/conflict complexity — kept as a later
-option, not built first.
+~£0; host the single Go binary (embedded SPA) on Fly.io/Render alongside it. On
+iOS the store is local (SQLite / SwiftData) with the shared `internal/calc` engine
+via `gomobile`; sync is last-write-wins per record. The Phase 1 storage interface
+keeps the server datastore swappable (SQLite/Turso later) — a low-regret bet.
 
 **Pricing — match the payment type to the cost type.** Freemium:
 - **Free:** core tracking (readings, graph, single-car status). ~Zero ongoing cost;
@@ -115,8 +132,14 @@ hosted features prove wanted. No billing infrastructure before Phase 5.
 - **Datastore for hosted mode:** *direction set* — managed Postgres with row-level
   multi-tenancy (see Monetisation & data strategy). Kept swappable via the Phase 1
   storage interface; SQLite/Turso remains a fallback. Confirm at Phase 3.
-- **Auth model:** email+password vs OAuth / Sign in with Apple (best for the iOS
-  story) vs both.
+- **Auth model:** email+password vs Sign in with Apple (best for the iOS story) vs
+  both. Note: auth gates *sync/web only* — never required for offline app use.
+- **Sync approach:** *direction set* — own local-store ↔ Postgres sync (so web +
+  iOS share one dataset), **not** CloudKit (iOS-only). Last-write-wins per record;
+  tiny date-keyed data keeps conflicts rare and resolution trivial.
+- **On-device calc:** *direction set* — reuse Go `internal/calc` on iOS via
+  `gomobile`, **not** a Swift reimplementation (which would recreate the cmd/api
+  divergence Phase 0 killed, three-way).
 - **First notification channel:** email confirmed as Phase 4 start; push (APNs)
   follows with the iOS client.
 - **Self-hosted tier:** keep the embedded-SPA single-user binary as a supported
