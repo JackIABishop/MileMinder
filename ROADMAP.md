@@ -78,10 +78,43 @@ items are unlocked by the phases above.
 - **Alerts delivery (email → push)** — Phase 4 (email) then Phase 5 (APNs).
 - **Automated odometer capture** — OCR a dashboard photo, or pull from a connected-car API (e.g. Smartcar). High value, high effort, external dependency.
 
+## Monetisation & data strategy
+
+Direction — not final scope, but it anchors the Phase 2/3 decisions.
+
+**Positioning.** MileMinder targets a specific gap — PCP/lease *allowance* breach —
+that generic fuel/mileage-log apps don't serve. The value story is direct: the app
+costs less than a single over-mileage penalty charge.
+
+**Data & hosting.** The hosted path is chosen (web dashboard *and* sharing both
+need a backend). Datastore: a single **managed Postgres** (Neon / Supabase / Fly)
+with **row-level multi-tenancy** (a `user_id` on every row). The data is tiny, so
+one small instance holds thousands of users and free tiers cover early growth at
+~£0. Host the single Go binary (embedded SPA) on Fly.io/Render alongside it. The
+Phase 1 storage interface keeps this swappable (SQLite/Turso later) — a low-regret
+bet. A local-first-on-device model with the backend as an optional sync layer is
+the zero-cost-per-user ideal, but adds sync/conflict complexity — kept as a later
+option, not built first.
+
+**Pricing — match the payment type to the cost type.** Freemium:
+- **Free:** core tracking (readings, graph, single-car status). ~Zero ongoing cost;
+  drives downloads and word-of-mouth in the niche.
+- **One-time "Pro" unlock (~£8–12 IAP):** the analysis features (multi-car, fleet
+  insights, projections, overage cost, alert config). These compute on-device, so a
+  one-time price is honest and safe. Qualifies for Apple's Small Business Program (15%).
+- **Small optional subscription (~£10–15/yr), later:** *only* the genuinely
+  recurring-cost features — cloud sync across devices, web dashboard access, push alerts.
+
+The rule underneath it: **never put a one-time price on a feature that costs money
+forever.** One-time for the on-device brains; subscription only for the always-on
+plumbing. Ship free + one-time Pro first; add the subscription tier only if the
+hosted features prove wanted. No billing infrastructure before Phase 5.
+
 ## Open decisions
 
-- **Datastore for hosted mode:** Postgres (shared, relational) vs SQLite-per-user
-  (simple isolation, harder cross-user fleet/analytics). Decide before Phase 3.
+- **Datastore for hosted mode:** *direction set* — managed Postgres with row-level
+  multi-tenancy (see Monetisation & data strategy). Kept swappable via the Phase 1
+  storage interface; SQLite/Turso remains a fallback. Confirm at Phase 3.
 - **Auth model:** email+password vs OAuth / Sign in with Apple (best for the iOS
   story) vs both.
 - **First notification channel:** email confirmed as Phase 4 start; push (APNs)
