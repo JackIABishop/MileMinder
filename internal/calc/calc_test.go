@@ -194,7 +194,10 @@ func TestComputeStatus_NewPlan(t *testing.T) {
 	if s.DailyRate != 0 {
 		t.Errorf("DailyRate = %v, want 0 for a brand-new plan", s.DailyRate)
 	}
-	for _, f := range []float64{s.Delta, s.DailyRate, s.AvgAnnualMileage, s.RecentAnnualMileage, s.ProjectedEnd} {
+	for _, f := range []float64{
+		s.Delta, s.DailyRate, s.AvgAnnualMileage, s.RecentAnnualMileage, s.ProjectedEnd,
+		s.EstimatedFinalMileage, s.DrivableDailyRate, s.ProjectedExcessMiles, s.ProjectedOverageCost, s.PaceTrendDelta,
+	} {
 		if math.IsNaN(f) || math.IsInf(f, 0) {
 			t.Errorf("non-finite value in new-plan status: %v", f)
 		}
@@ -306,5 +309,142 @@ func TestComputeFleetInsights_Empty(t *testing.T) {
 	}
 	if got.NetDelta != 0 || got.TotalAvgAnnualMileage != 0 || got.AvgPercentUsed != 0 {
 		t.Errorf("empty fleet should have zero sums, got %+v", got)
+	}
+}
+
+// TestRenewalCountdown locks #3: days_to_end is the whole countdown to plan end,
+// and estimated_final_mileage projects from the latest reading at the current
+// daily pace (daily_rate).
+func TestRenewalCountdown(t *testing.T) {
+	now := date("2025-04-11") // 100 days into a one-year plan
+	v := vehicle("2025-01-01", "2026-01-01", 3650, 0, map[string]int{
+		"2025-01-01": 0,
+		"2025-04-11": 1000, // 1000 mi over 100 days → daily_rate = 10
+	})
+	s := computeStatus("test", v, now)
+
+	termDays := date("2026-01-01").Sub(now).Hours() / 24.0
+	if want := int(math.Ceil(termDays)); s.DaysToEnd != want {
+		t.Errorf("DaysToEnd = %d, want %d", s.DaysToEnd, want)
+	}
+	if !almostEqual(s.DailyRate, 10) {
+		t.Fatalf("precondition: DailyRate = %v, want 10", s.DailyRate)
+	}
+	wantFinal := 1000.0 + 10.0*termDays
+	if !almostEqual(s.EstimatedFinalMileage, wantFinal) {
+		t.Errorf("EstimatedFinalMileage = %v, want %v", s.EstimatedFinalMileage, wantFinal)
+	}
+}
+
+// TestExpiredPlan locks the past-plan-end behaviour of the renewal/projection
+// figures: termDays is clamped at 0, so days_to_end never goes negative and the
+// final-mileage estimate never projects backward from the latest reading.
+func TestExpiredPlan(t *testing.T) {
+	now := date("2025-06-01") // five months after the plan ended
+	v := vehicle("2024-01-01", "2025-01-01", 10000, 0, map[string]int{
+		"2024-01-01": 0,
+		"2024-12-01": 12000,
+	})
+	s := computeStatus("expired", v, now)
+
+	if s.DaysToEnd != 0 {
+		t.Errorf("DaysToEnd = %d, want 0 once the plan has ended", s.DaysToEnd)
+	}
+	if !almostEqual(s.EstimatedFinalMileage, 12000) {
+		t.Errorf("EstimatedFinalMileage = %v, want the latest reading (12000), not a backward projection", s.EstimatedFinalMileage)
+	}
+	if s.DrivableDailyRate != 0 {
+		t.Errorf("DrivableDailyRate = %v, want 0 with no days left", s.DrivableDailyRate)
+	}
+}
+
+// TestDrivableDailyRate locks #4: the safe mi/day for the rest of the plan is a
+// capacity figure (remaining allowed miles ÷ remaining days), clamped to 0 once
+// you've already used the whole term allowance.
+func TestDrivableDailyRate(t *testing.T) {
+	now := date("2025-04-11")
+	termDays := date("2026-01-01").Sub(now).Hours() / 24.0
+
+	// Under budget: 3650 mi total allowance over the year, 1000 used so far.
+	under := vehicle("2025-01-01", "2026-01-01", 3650, 0, map[string]int{
+		"2025-01-01": 0,
+		"2025-04-11": 1000,
+	})
+	su := computeStatus("under", under, now)
+	wantRate := (3650.0 - 1000.0) / termDays
+	if !almostEqual(su.DrivableDailyRate, wantRate) {
+		t.Errorf("under-budget DrivableDailyRate = %v, want %v", su.DrivableDailyRate, wantRate)
+	}
+
+	// Over budget: only 500 mi allowed for the whole term but 1000 already used.
+	over := vehicle("2025-01-01", "2026-01-01", 500, 0, map[string]int{
+		"2025-01-01": 0,
+		"2025-04-11": 1000,
+	})
+	so := computeStatus("over", over, now)
+	if so.DrivableDailyRate != 0 {
+		t.Errorf("over-budget DrivableDailyRate = %v, want 0 (clamped)", so.DrivableDailyRate)
+	}
+}
+
+// TestOverageCost locks #5: projected excess miles are computed regardless of an
+// excess rate, but the £ penalty is only populated when a rate is set.
+func TestOverageCost(t *testing.T) {
+	now := date("2025-04-11")
+	termDays := date("2026-01-01").Sub(now).Hours() / 24.0
+	// daily_rate = 10; estimated final = 1000 + 10*termDays; allowance over the
+	// full year = 1000 mi, so the plan is projected well over.
+	mk := func(rate int) *model.VehicleData {
+		v := vehicle("2025-01-01", "2026-01-01", 1000, 0, map[string]int{
+			"2025-01-01": 0,
+			"2025-04-11": 1000,
+		})
+		v.Plan.ExcessRate = rate
+		return v
+	}
+
+	wantExcess := (1000.0 + 10.0*termDays) - 1000.0 // projected miles driven − total allowance
+
+	unset := computeStatus("unset", mk(0), now)
+	if !almostEqual(unset.ProjectedExcessMiles, wantExcess) {
+		t.Errorf("ProjectedExcessMiles (unset) = %v, want %v", unset.ProjectedExcessMiles, wantExcess)
+	}
+	if unset.ProjectedOverageCost != 0 {
+		t.Errorf("ProjectedOverageCost (unset) = %v, want 0", unset.ProjectedOverageCost)
+	}
+
+	set := computeStatus("set", mk(10), now) // 10 pence/excess mile
+	wantCost := wantExcess * 10.0 / 100.0
+	if !almostEqual(set.ProjectedOverageCost, wantCost) {
+		t.Errorf("ProjectedOverageCost (set) = %v, want %v", set.ProjectedOverageCost, wantCost)
+	}
+}
+
+// TestPaceTrend locks #7: recent 90-day pace vs lifetime average is classified
+// as accelerating / easing / steady against a ±5% threshold.
+func TestPaceTrend(t *testing.T) {
+	now := date("2025-04-01")
+	cases := []struct {
+		name string
+		rdgs map[string]int
+		want string
+	}{
+		{"accelerating", map[string]int{ // light first year, heavy recent
+			"2024-01-01": 0, "2025-01-01": 5000, "2025-04-01": 8000,
+		}, "accelerating"},
+		{"easing", map[string]int{ // heavy first year, light recent
+			"2024-01-01": 0, "2025-01-01": 15000, "2025-04-01": 16000,
+		}, "easing"},
+		{"steady", map[string]int{ // constant pace → recent ≈ lifetime
+			"2024-01-01": 0, "2025-04-01": 4560,
+		}, "steady"},
+	}
+	for _, tc := range cases {
+		v := vehicle("2024-01-01", "2027-01-01", 10000, 0, tc.rdgs)
+		s := computeStatus(tc.name, v, now)
+		if s.PaceTrend != tc.want {
+			t.Errorf("%s: PaceTrend = %q (delta=%v, recent=%v, avg=%v), want %q",
+				tc.name, s.PaceTrend, s.PaceTrendDelta, s.RecentAnnualMileage, s.AvgAnnualMileage, tc.want)
+		}
 	}
 }

@@ -36,6 +36,7 @@ func registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/vehicles", HandleListVehicles)
 	mux.HandleFunc("GET /api/vehicles/{id}", HandleGetVehicle)
 	mux.HandleFunc("POST /api/vehicles", HandleCreateVehicle)
+	mux.HandleFunc("PATCH /api/vehicles/{id}", HandleUpdatePlan)
 	mux.HandleFunc("POST /api/vehicles/{id}/readings", HandleAddReading)
 	mux.HandleFunc("GET /api/vehicles/{id}/readings", HandleGetReadings)
 	mux.HandleFunc("DELETE /api/vehicles/{id}/readings/{date}", HandleDeleteReading)
@@ -87,7 +88,7 @@ func (h spaHandlerFS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 		if r.Method == "OPTIONS" {

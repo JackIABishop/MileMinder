@@ -59,6 +59,14 @@
 
 	$: deltaStatus = status ? getDeltaStatus(status.delta) : null;
 	$: today = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+	// Trend signal (#7): recent 90-day pace vs lifetime average.
+	const trendBadges: Record<string, { icon: string; label: string; color: string }> = {
+		accelerating: { icon: '↑', label: 'Accelerating', color: 'text-gauge-amber' },
+		easing: { icon: '↓', label: 'Easing off', color: 'text-gauge-green' },
+		steady: { icon: '→', label: 'Steady', color: 'text-carbon-400' }
+	};
+	$: trendBadge = status ? (trendBadges[status.pace_trend] ?? trendBadges.steady) : null;
 </script>
 
 <svelte:head>
@@ -140,6 +148,15 @@
 					subtitle="{formatNumber(Math.round(status.annual_allowance / 365))} mi/day ideal"
 				/>
 
+				<!-- Drivable-rate budget (#4): safe mi/day for the rest of the plan -->
+				<StatCard
+					title="Safe Daily Rate"
+					value={formatNumber(status.drivable_daily_rate, 1)}
+					unit="mi/day"
+					subtitle="To stay legal for the rest of the plan"
+					color={status.daily_rate > status.drivable_daily_rate ? 'amber' : 'green'}
+				/>
+
 				<!-- Average annual mileage: lifetime average (for insurance) + recent pace -->
 				<div class="col-span-2 card animate-slide-up">
 					<h3 class="text-sm font-medium text-carbon-400 mb-3">Average Annual Mileage</h3>
@@ -156,7 +173,15 @@
 								<span class="font-mono text-xl font-semibold text-carbon-300">{formatNumber(Math.round(status.recent_annual_mileage))}</span>
 								<span class="text-sm text-carbon-500">mi/yr</span>
 							</div>
-							<p class="mt-1 text-xs text-carbon-500">Last 90 days</p>
+							<div class="mt-1 flex items-center justify-end gap-2">
+								<p class="text-xs text-carbon-500">Last 90 days</p>
+								{#if trendBadge}
+									<span class="flex items-center gap-1 text-xs font-medium {trendBadge.color}">
+										<span>{trendBadge.icon}</span>
+										<span>{trendBadge.label}</span>
+									</span>
+								{/if}
+							</div>
 						</div>
 					</div>
 				</div>
@@ -206,8 +231,14 @@
 						<span class="text-carbon-400">Miles available</span>
 						<span class="font-mono text-2xl text-carbon-100">{formatNumber(Math.round(status.miles_left_term))}</span>
 					</div>
+					<!-- Final-mileage estimate (#3): projected odometer at plan end -->
+					<div class="flex justify-between items-baseline">
+						<span class="text-carbon-400">Est. final odometer</span>
+						<span class="font-mono text-2xl text-carbon-100">{formatNumber(Math.round(status.estimated_final_mileage))} <span class="text-base text-carbon-500">mi</span></span>
+					</div>
+					<!-- Renewal countdown (#3) -->
 					<div class="text-sm text-carbon-500">
-						Plan ends {formatDate(status.plan_end)}
+						Plan ends {formatDate(status.plan_end)} — {formatNumber(status.days_to_end)} days away
 					</div>
 				</div>
 			</div>
@@ -241,6 +272,25 @@
 					{/if}
 				</div>
 			</div>
+
+			<!-- Overage cost estimate (#5): only when an excess rate is configured -->
+			{#if status.excess_rate}
+				<div class="mt-4 pt-4 border-t border-carbon-800 flex items-center justify-between">
+					<div>
+						<p class="text-sm text-carbon-400">Projected penalty over the full term</p>
+						<p class="text-xs text-carbon-500 mt-1">
+							{#if status.projected_excess_miles > 0}
+								{formatNumber(Math.round(status.projected_excess_miles))} mi over · {status.excess_rate}p/mile
+							{:else}
+								Within allowance at your current pace
+							{/if}
+						</p>
+					</div>
+					<p class="text-2xl font-mono {status.projected_excess_miles > 0 ? 'text-gauge-red' : 'text-gauge-green'}">
+						£{formatNumber(status.projected_overage_cost ?? 0, 2)}
+					</p>
+				</div>
+			{/if}
 		</div>
 
 		<!-- Quick Add Section -->
