@@ -58,7 +58,7 @@ the TS client), the SvelteKit SPA (becomes one API client), and the embed mode
 |---|---|---|---|
 | **0** | Extract `internal/calc` (or `internal/core`) as the single source of truth for `computeStatus`/`odometerAt`/projection. Both `cmd/` and `internal/api/` call it. | Low | Highest-leverage move; valuable even if hosting never ships. Do first. |
 | **1** | Storage interface (repository pattern) behind today's YAML impl. Handlers stop calling `loadVehicle`/`saveVehicle` directly. | Low | No behaviour change. Unblocks swapping the backend. |
-| **2** | Identity + auth (token/session; password or Sign in with Apple) + per-user scoping. Introduce `/api/v1`. | Medium | **Auth gates sync/web only — the app works offline with no account; you sign in solely to enable sync, backup, and web access. No forced signup.** Defines the contract the iOS client syncs against. |
+| **2** | Identity + auth (email+password, opaque sessions) + per-user scoping. Introduce `/api/v1`. **Implemented** — see [Hosted mode](docs/hosted-mode.md). | Medium | **Auth gates sync/web only — the app works offline with no account; you sign in solely to enable sync, backup, and web access. No forced signup.** Defines the contract the iOS client syncs against. Interim file-backed user/session stores + per-user YAML dirs; Phase 3 swaps in Postgres behind the same interfaces. Password reset deferred to Phase 4 (#33, needs the email channel). |
 | **3** | Server storage impl → managed **Postgres, multi-tenant**. This is the **sync/backup + web-read store**, *not* the app's primary store (the device is). Stateless server. | Medium | Repository interface from Phase 1 makes this localised. |
 | **4** | Background scheduler + notification-channel abstraction. Periodic "recompute projection, fire if threshold crossed." Ship **email** first. | Medium | New infra: a job runner. Channel is abstracted so push slots in later. Runs server-side against synced data. |
 | **5** | Native iOS client: **local on-device store**, `internal/calc` reused via **`gomobile`**, **last-write-wins sync** to the Postgres backend, APNs push. Fully usable offline; syncs when connected. | High | The local-first payoff. Own-store↔Postgres sync (not CloudKit) so web + iOS share one dataset. |
@@ -132,8 +132,10 @@ hosted features prove wanted. No billing infrastructure before Phase 5.
 - **Datastore for hosted mode:** *direction set* — managed Postgres with row-level
   multi-tenancy (see Monetisation & data strategy). Kept swappable via the Phase 1
   storage interface; SQLite/Turso remains a fallback. Confirm at Phase 3.
-- **Auth model:** email+password vs Sign in with Apple (best for the iOS story) vs
-  both. Note: auth gates *sync/web only* — never required for offline app use.
+- **Auth model:** *decided (Phase 2)* — email+password with opaque, server-side
+  session tokens (HttpOnly cookie for the web SPA; `Authorization: Bearer` for
+  future native/CLI clients). Sign in with Apple is deferred to Phase 5 alongside
+  the iOS client. Auth gates *sync/web only* — never required for offline app use.
 - **Sync approach:** *direction set* — own local-store ↔ Postgres sync (so web +
   iOS share one dataset), **not** CloudKit (iOS-only). Last-write-wins per record;
   tiny date-keyed data keeps conflicts rare and resolution trivial.
@@ -142,5 +144,10 @@ hosted features prove wanted. No billing infrastructure before Phase 5.
   divergence Phase 0 killed, three-way).
 - **First notification channel:** email confirmed as Phase 4 start; push (APNs)
   follows with the iOS client.
-- **Self-hosted tier:** keep the embedded-SPA single-user binary as a supported
-  deployment, or eventually drop it?
+- **Self-hosted tier:** *kept (Phase 2)* — `mileminder serve` remains the
+  no-auth, single-user, embedded-SPA binary and is a first-class mode. Hosted
+  multi-user is opt-in via `serve --hosted` (see [docs/hosted-mode.md](docs/hosted-mode.md)).
+  Same binary, two modes; the single-user path is unchanged behaviour.
+- **Password reset:** deferred to Phase 4 (#33) — self-service reset needs the
+  email channel. Until then, hosted operators recover a locked-out user manually
+  (documented in [docs/hosted-mode.md](docs/hosted-mode.md)).

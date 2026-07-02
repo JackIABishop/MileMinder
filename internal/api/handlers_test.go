@@ -45,7 +45,7 @@ func sampleVehicle() *model.VehicleData {
 func TestGetMissingVehicleReturns404(t *testing.T) {
 	srv, _ := newTestServer(t, nil)
 
-	resp, err := http.Get(srv.URL + "/api/vehicles/ghost")
+	resp, err := http.Get(srv.URL + "/api/v1/vehicles/ghost")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestGetMissingVehicleReturns404(t *testing.T) {
 func TestGetVehicleReturnsStatus(t *testing.T) {
 	srv, _ := newTestServer(t, map[string]*model.VehicleData{"golf": sampleVehicle()})
 
-	resp, err := http.Get(srv.URL + "/api/vehicles/golf")
+	resp, err := http.Get(srv.URL + "/api/v1/vehicles/golf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestAddReadingRejectsBelowMaxWithoutForce(t *testing.T) {
 	srv, st := newTestServer(t, map[string]*model.VehicleData{"golf": sampleVehicle()})
 
 	body := bytes.NewBufferString(`{"date":"2025-06-01","miles":4000}`)
-	resp, err := http.Post(srv.URL+"/api/vehicles/golf/readings", "application/json", body)
+	resp, err := http.Post(srv.URL+"/api/v1/vehicles/golf/readings", "application/json", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestAddReadingBelowMaxWithForceSucceeds(t *testing.T) {
 	srv, st := newTestServer(t, map[string]*model.VehicleData{"golf": sampleVehicle()})
 
 	body := bytes.NewBufferString(`{"date":"2025-06-01","miles":4000,"force":true}`)
-	resp, err := http.Post(srv.URL+"/api/vehicles/golf/readings", "application/json", body)
+	resp, err := http.Post(srv.URL+"/api/v1/vehicles/golf/readings", "application/json", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestAddReadingToMissingVehicle404(t *testing.T) {
 	srv, _ := newTestServer(t, nil)
 
 	body := bytes.NewBufferString(`{"date":"2025-06-01","miles":6000}`)
-	resp, err := http.Post(srv.URL+"/api/vehicles/ghost/readings", "application/json", body)
+	resp, err := http.Post(srv.URL+"/api/v1/vehicles/ghost/readings", "application/json", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestAddReadingToMissingVehicle404(t *testing.T) {
 func TestDeleteReading(t *testing.T) {
 	srv, st := newTestServer(t, map[string]*model.VehicleData{"golf": sampleVehicle()})
 
-	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/vehicles/golf/readings/2025-01-01", nil)
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/vehicles/golf/readings/2025-01-01", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +147,7 @@ func TestDeleteReading(t *testing.T) {
 func TestDeleteMissingReading404(t *testing.T) {
 	srv, _ := newTestServer(t, map[string]*model.VehicleData{"golf": sampleVehicle()})
 
-	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/vehicles/golf/readings/2099-01-01", nil)
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v1/vehicles/golf/readings/2099-01-01", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestCurrentGetSet(t *testing.T) {
 	srv, _ := newTestServer(t, map[string]*model.VehicleData{"golf": sampleVehicle()})
 
 	// Unset → "".
-	resp, err := http.Get(srv.URL + "/api/current")
+	resp, err := http.Get(srv.URL + "/api/v1/current")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestCurrentGetSet(t *testing.T) {
 	}
 
 	// Set it.
-	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/current", bytes.NewBufferString(`{"id":"golf"}`))
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/current", bytes.NewBufferString(`{"id":"golf"}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -186,7 +186,7 @@ func TestCurrentGetSet(t *testing.T) {
 	}
 
 	// Read it back.
-	resp, _ = http.Get(srv.URL + "/api/current")
+	resp, _ = http.Get(srv.URL + "/api/v1/current")
 	json.NewDecoder(resp.Body).Decode(&got)
 	resp.Body.Close()
 	if got["current"] != "golf" {
@@ -197,7 +197,7 @@ func TestCurrentGetSet(t *testing.T) {
 func TestSetCurrentMissingVehicle404(t *testing.T) {
 	srv, _ := newTestServer(t, nil)
 
-	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/current", bytes.NewBufferString(`{"id":"ghost"}`))
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/current", bytes.NewBufferString(`{"id":"ghost"}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -213,7 +213,7 @@ func TestListVehiclesShape(t *testing.T) {
 	srv, st := newTestServer(t, map[string]*model.VehicleData{"golf": sampleVehicle()})
 	st.SetCurrent(context.Background(), "golf")
 
-	resp, err := http.Get(srv.URL + "/api/vehicles")
+	resp, err := http.Get(srv.URL + "/api/v1/vehicles")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestFleetShape(t *testing.T) {
 	srv, _ := newTestServer(t, nil)
 
 	// Empty fleet must serialise Vehicles as [] (not null).
-	resp, err := http.Get(srv.URL + "/api/fleet")
+	resp, err := http.Get(srv.URL + "/api/v1/fleet")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,5 +242,48 @@ func TestFleetShape(t *testing.T) {
 	}
 	if fleet.Vehicles == nil {
 		t.Fatal("empty fleet Vehicles should be [], got null")
+	}
+}
+
+// The single-user router reports mode "single-user" at /api/v1/meta, with no
+// auth required, so the SPA knows not to show a login flow.
+func TestMetaReportsSingleUserMode(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+
+	resp, err := http.Get(srv.URL + "/api/v1/meta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	var meta struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta.Mode != "single-user" {
+		t.Fatalf("want mode single-user, got %q", meta.Mode)
+	}
+}
+
+// The unversioned paths are gone: a clean break, since the only client is the
+// co-updated SPA.
+func TestUnversionedPathsAreGone(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]*model.VehicleData{"golf": sampleVehicle()})
+
+	resp, err := http.Get(srv.URL + "/api/vehicles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	// The SPA fallback serves index.html for unknown non-API paths, so the key
+	// assertion is that it is not a successful JSON API response.
+	if resp.StatusCode == http.StatusOK {
+		if ct := resp.Header.Get("Content-Type"); ct == "application/json" {
+			t.Fatal("unversioned /api/vehicles still serves the JSON API")
+		}
 	}
 }

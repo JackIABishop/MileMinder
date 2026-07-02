@@ -13,15 +13,16 @@ import (
 	"github.com/jackiabishop/mileminder/internal/storage"
 )
 
-// Server holds the HTTP layer's dependencies. All persistence goes through the
-// storage.Store, so swapping the backend (Phase 3) does not touch handlers.
-type Server struct {
-	store storage.Store
-}
+// Server holds the HTTP layer's handler methods. The storage.Store is no longer
+// a field: it is a per-request dependency the mode middleware injects into the
+// request context (see middleware.go, storeFrom), so the same handlers serve
+// both the single-user store and a hosted user's scoped store without knowing
+// which. Handlers read it with storeFrom(r.Context()).
+type Server struct{}
 
-// NewServer returns a Server backed by store.
-func NewServer(store storage.Store) *Server {
-	return &Server{store: store}
+// NewServer returns a Server.
+func NewServer() *Server {
+	return &Server{}
 }
 
 // writeStoreError maps a storage error onto an HTTP response: a missing
@@ -47,7 +48,7 @@ type VehicleListItem struct {
 // and JSON contract unchanged.
 type VehicleStatus = calc.Status
 
-// FleetResponse is the GET /api/fleet envelope: the per-vehicle statuses plus a
+// FleetResponse is the GET /api/v1/fleet envelope: the per-vehicle statuses plus a
 // household roll-up derived from those same statuses (see calc.ComputeFleetInsights).
 type FleetResponse struct {
 	Vehicles []VehicleStatus    `json:"vehicles"`
@@ -69,13 +70,13 @@ type GraphData struct {
 
 // HandleListVehicles returns all vehicles
 func (s *Server) HandleListVehicles(w http.ResponseWriter, r *http.Request) {
-	records, err := s.store.ListVehicles(r.Context())
+	records, err := storeFrom(r.Context()).ListVehicles(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
 
-	defaultID, err := s.store.GetCurrent(r.Context())
+	defaultID, err := storeFrom(r.Context()).GetCurrent(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -102,7 +103,7 @@ func (s *Server) HandleGetVehicle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := s.store.GetVehicle(r.Context(), id)
+	data, err := storeFrom(r.Context()).GetVehicle(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -110,7 +111,7 @@ func (s *Server) HandleGetVehicle(w http.ResponseWriter, r *http.Request) {
 
 	status := calc.ComputeStatus(id, data)
 
-	defaultID, err := s.store.GetCurrent(r.Context())
+	defaultID, err := storeFrom(r.Context()).GetCurrent(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -166,7 +167,7 @@ func (s *Server) HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	if err := s.store.SaveVehicle(r.Context(), req.ID, data); err != nil {
+	if err := storeFrom(r.Context()).SaveVehicle(r.Context(), req.ID, data); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -197,7 +198,7 @@ func (s *Server) HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := s.store.GetVehicle(r.Context(), id)
+	data, err := storeFrom(r.Context()).GetVehicle(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -211,7 +212,7 @@ func (s *Server) HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
 		data.Plan.ExcessRate = *req.ExcessRate
 	}
 
-	if err := s.store.SaveVehicle(r.Context(), id, data); err != nil {
+	if err := storeFrom(r.Context()).SaveVehicle(r.Context(), id, data); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -242,7 +243,7 @@ func (s *Server) HandleAddReading(w http.ResponseWriter, r *http.Request) {
 		req.Date = time.Now().Format("2006-01-02")
 	}
 
-	data, err := s.store.GetVehicle(r.Context(), id)
+	data, err := storeFrom(r.Context()).GetVehicle(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -260,7 +261,7 @@ func (s *Server) HandleAddReading(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.PutReading(r.Context(), id, req.Date, req.Miles); err != nil {
+	if err := storeFrom(r.Context()).PutReading(r.Context(), id, req.Date, req.Miles); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -281,7 +282,7 @@ func (s *Server) HandleGetReadings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := s.store.GetVehicle(r.Context(), id)
+	data, err := storeFrom(r.Context()).GetVehicle(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -308,7 +309,7 @@ func (s *Server) HandleDeleteReading(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.DeleteReading(r.Context(), id, date); err != nil {
+	if err := storeFrom(r.Context()).DeleteReading(r.Context(), id, date); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -325,7 +326,7 @@ func (s *Server) HandleGetGraphData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := s.store.GetVehicle(r.Context(), id)
+	data, err := storeFrom(r.Context()).GetVehicle(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -358,7 +359,7 @@ func (s *Server) HandleGetGraphData(w http.ResponseWriter, r *http.Request) {
 
 // HandleGetCurrent returns the current default vehicle
 func (s *Server) HandleGetCurrent(w http.ResponseWriter, r *http.Request) {
-	current, err := s.store.GetCurrent(r.Context())
+	current, err := storeFrom(r.Context()).GetCurrent(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -378,7 +379,7 @@ func (s *Server) HandleSetCurrent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.store.SetCurrent(r.Context(), req.ID); err != nil {
+	if err := storeFrom(r.Context()).SetCurrent(r.Context(), req.ID); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -389,13 +390,13 @@ func (s *Server) HandleSetCurrent(w http.ResponseWriter, r *http.Request) {
 
 // HandleFleet returns status for all vehicles
 func (s *Server) HandleFleet(w http.ResponseWriter, r *http.Request) {
-	records, err := s.store.ListVehicles(r.Context())
+	records, err := storeFrom(r.Context()).ListVehicles(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
 
-	defaultID, err := s.store.GetCurrent(r.Context())
+	defaultID, err := storeFrom(r.Context()).GetCurrent(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -427,7 +428,7 @@ func (s *Server) HandleExportCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := s.store.GetVehicle(r.Context(), id)
+	data, err := storeFrom(r.Context()).GetVehicle(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err)
 		return

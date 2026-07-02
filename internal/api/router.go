@@ -1,54 +1,88 @@
 package api
 
 import (
+	"encoding/json"
 	"io/fs"
 	"net/http"
 
 	"github.com/jackiabishop/mileminder/internal/storage"
 )
 
-// NewRouter creates and configures the API router (for dev mode, API only),
-// backed by store.
+// Server mode, reported at GET /api/v1/meta so one SPA build can serve both:
+// single-user hides all auth UI; hosted shows login and gates data on a session.
+const (
+	modeSingleUser = "single-user"
+	modeHosted     = "hosted"
+)
+
+// metaResponse is the GET /api/v1/meta envelope.
+type metaResponse struct {
+	Mode string `json:"mode"`
+}
+
+// handleMeta reports the server mode. It requires no auth — the SPA calls it on
+// boot, before any login, to decide whether to show the login flow.
+func handleMeta(mode string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(metaResponse{Mode: mode})
+	}
+}
+
+// NewRouter creates the single-user API router serving static files from disk,
+// or API-only when staticDir is "" (the serve --dev path). This is the only
+// constructor that opens CORS: dev runs the Vite frontend on a separate origin.
 func NewRouter(store storage.Store, staticDir string) http.Handler {
 	mux := http.NewServeMux()
-	registerAPIRoutes(mux, NewServer(store))
-
-	// Serve static files from disk (for development)
+	mux.HandleFunc("GET /api/v1/meta", handleMeta(modeSingleUser))
+	registerDataRoutes(mux, NewServer(), singleUser(store))
 	if staticDir != "" {
-		fileServer := http.FileServer(http.Dir(staticDir))
-		mux.Handle("/", spaHandlerDir{staticDir: staticDir, fileServer: fileServer})
+		mountStaticDir(mux, staticDir)
 	}
-
 	return corsMiddleware(mux)
 }
 
-// NewRouterWithFS creates a router with embedded filesystem for production,
-// backed by store.
+// NewRouterWithFS creates the single-user API router serving the embedded SPA
+// (production self-hosted binary). No CORS: the SPA is same-origin.
 func NewRouterWithFS(store storage.Store, staticFS fs.FS) http.Handler {
 	mux := http.NewServeMux()
-	registerAPIRoutes(mux, NewServer(store))
-
-	// Serve embedded static files
-	fileServer := http.FileServer(http.FS(staticFS))
-	mux.Handle("/", spaHandlerFS{staticFS: staticFS, fileServer: fileServer})
-
-	return corsMiddleware(mux)
+	mux.HandleFunc("GET /api/v1/meta", handleMeta(modeSingleUser))
+	registerDataRoutes(mux, NewServer(), singleUser(store))
+	mountStaticFS(mux, staticFS)
+	return mux
 }
 
-// registerAPIRoutes registers all API endpoints against s.
-func registerAPIRoutes(mux *http.ServeMux, s *Server) {
-	mux.HandleFunc("GET /api/vehicles", s.HandleListVehicles)
-	mux.HandleFunc("GET /api/vehicles/{id}", s.HandleGetVehicle)
-	mux.HandleFunc("POST /api/vehicles", s.HandleCreateVehicle)
-	mux.HandleFunc("PATCH /api/vehicles/{id}", s.HandleUpdatePlan)
-	mux.HandleFunc("POST /api/vehicles/{id}/readings", s.HandleAddReading)
-	mux.HandleFunc("GET /api/vehicles/{id}/readings", s.HandleGetReadings)
-	mux.HandleFunc("DELETE /api/vehicles/{id}/readings/{date}", s.HandleDeleteReading)
-	mux.HandleFunc("GET /api/vehicles/{id}/graph", s.HandleGetGraphData)
-	mux.HandleFunc("GET /api/vehicles/{id}/export", s.HandleExportCSV)
-	mux.HandleFunc("GET /api/current", s.HandleGetCurrent)
-	mux.HandleFunc("PUT /api/current", s.HandleSetCurrent)
-	mux.HandleFunc("GET /api/fleet", s.HandleFleet)
+// mountStaticDir serves the SPA from disk with client-side-routing fallback.
+func mountStaticDir(mux *http.ServeMux, staticDir string) {
+	fileServer := http.FileServer(http.Dir(staticDir))
+	mux.Handle("/", spaHandlerDir{staticDir: staticDir, fileServer: fileServer})
+}
+
+// mountStaticFS serves the SPA from an embedded filesystem with fallback.
+func mountStaticFS(mux *http.ServeMux, staticFS fs.FS) {
+	fileServer := http.FileServer(http.FS(staticFS))
+	mux.Handle("/", spaHandlerFS{staticFS: staticFS, fileServer: fileServer})
+}
+
+// registerDataRoutes registers the vehicle/current/fleet data endpoints against
+// s, each wrapped by the mode middleware (data). The mode middleware injects the
+// storage.Store the handler reads via storeFrom: the process-wide store in
+// single-user mode, or the authenticated user's scoped store in hosted mode.
+// Handlers themselves are mode-blind.
+func registerDataRoutes(mux *http.ServeMux, s *Server, data middleware) {
+	d := func(h http.HandlerFunc) http.Handler { return data(h) }
+	mux.Handle("GET /api/v1/vehicles", d(s.HandleListVehicles))
+	mux.Handle("GET /api/v1/vehicles/{id}", d(s.HandleGetVehicle))
+	mux.Handle("POST /api/v1/vehicles", d(s.HandleCreateVehicle))
+	mux.Handle("PATCH /api/v1/vehicles/{id}", d(s.HandleUpdatePlan))
+	mux.Handle("POST /api/v1/vehicles/{id}/readings", d(s.HandleAddReading))
+	mux.Handle("GET /api/v1/vehicles/{id}/readings", d(s.HandleGetReadings))
+	mux.Handle("DELETE /api/v1/vehicles/{id}/readings/{date}", d(s.HandleDeleteReading))
+	mux.Handle("GET /api/v1/vehicles/{id}/graph", d(s.HandleGetGraphData))
+	mux.Handle("GET /api/v1/vehicles/{id}/export", d(s.HandleExportCSV))
+	mux.Handle("GET /api/v1/current", d(s.HandleGetCurrent))
+	mux.Handle("PUT /api/v1/current", d(s.HandleSetCurrent))
+	mux.Handle("GET /api/v1/fleet", d(s.HandleFleet))
 }
 
 // spaHandlerDir serves the SPA from disk, falling back to index.html for client-side routing
