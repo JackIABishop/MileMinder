@@ -2,62 +2,37 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/jackiabishop/mileminder/internal/calc"
 	"github.com/jackiabishop/mileminder/internal/model"
-	"gopkg.in/yaml.v3"
+	"github.com/jackiabishop/mileminder/internal/storage"
 )
 
-// getMileMinderDir returns the path to ~/.mileminder/
-func getMileMinderDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".mileminder"), nil
+// Server holds the HTTP layer's dependencies. All persistence goes through the
+// storage.Store, so swapping the backend (Phase 3) does not touch handlers.
+type Server struct {
+	store storage.Store
 }
 
-// loadVehicle loads a vehicle from its YAML file
-func loadVehicle(id string) (*model.VehicleData, error) {
-	dir, err := getMileMinderDir()
-	if err != nil {
-		return nil, err
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, id+".yml"))
-	if err != nil {
-		return nil, err
-	}
-	var data model.VehicleData
-	if err := yaml.Unmarshal(raw, &data); err != nil {
-		return nil, err
-	}
-	return &data, nil
+// NewServer returns a Server backed by store.
+func NewServer(store storage.Store) *Server {
+	return &Server{store: store}
 }
 
-// saveVehicle saves a vehicle to its YAML file
-func saveVehicle(id string, data *model.VehicleData) error {
-	dir, err := getMileMinderDir()
-	if err != nil {
-		return err
+// writeStoreError maps a storage error onto an HTTP response: a missing
+// vehicle/reading (storage.ErrNotFound) becomes a clean 404 without leaking
+// internal detail; anything else is a genuine I/O failure and becomes a 500.
+func writeStoreError(w http.ResponseWriter, err error) {
+	if errors.Is(err, storage.ErrNotFound) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
 	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-	f, err := os.Create(filepath.Join(dir, id+".yml"))
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	enc := yaml.NewEncoder(f)
-	defer enc.Close()
-	return enc.Encode(data)
+	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
 // VehicleListItem represents a vehicle in the list response
@@ -93,43 +68,25 @@ type GraphData struct {
 }
 
 // HandleListVehicles returns all vehicles
-func HandleListVehicles(w http.ResponseWriter, r *http.Request) {
-	dir, err := getMileMinderDir()
+func (s *Server) HandleListVehicles(w http.ResponseWriter, r *http.Request) {
+	records, err := s.store.ListVehicles(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 
-	entries, err := os.ReadDir(dir)
+	defaultID, err := s.store.GetCurrent(r.Context())
 	if err != nil {
-		if os.IsNotExist(err) {
-			json.NewEncoder(w).Encode([]VehicleListItem{})
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 
-	// Read default vehicle
-	defaultID := ""
-	if data, err := os.ReadFile(filepath.Join(dir, "current")); err == nil {
-		defaultID = strings.TrimSpace(string(data))
-	}
-
-	var vehicles []VehicleListItem
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".yml" {
-			continue
-		}
-		id := strings.TrimSuffix(e.Name(), ".yml")
-		v, err := loadVehicle(id)
-		if err != nil {
-			continue
-		}
+	vehicles := []VehicleListItem{}
+	for _, rec := range records {
 		vehicles = append(vehicles, VehicleListItem{
-			ID:        id,
-			Vehicle:   v.Vehicle,
-			IsDefault: id == defaultID,
+			ID:        rec.ID,
+			Vehicle:   rec.Data.Vehicle,
+			IsDefault: rec.ID == defaultID,
 		})
 	}
 
@@ -138,33 +95,38 @@ func HandleListVehicles(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetVehicle returns details and status for a specific vehicle
-func HandleGetVehicle(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleGetVehicle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "vehicle ID required", http.StatusBadRequest)
 		return
 	}
 
-	data, err := loadVehicle(id)
+	data, err := s.store.GetVehicle(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
 
 	status := calc.ComputeStatus(id, data)
 
-	// Check if default
-	dir, _ := getMileMinderDir()
-	if defaultData, err := os.ReadFile(filepath.Join(dir, "current")); err == nil {
-		status.IsDefault = strings.TrimSpace(string(defaultData)) == id
+	defaultID, err := s.store.GetCurrent(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
 	}
+	status.IsDefault = defaultID == id
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
 }
 
-// HandleCreateVehicle creates a new vehicle
-func HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
+// HandleCreateVehicle creates a new vehicle.
+//
+// SaveVehicle is an upsert, so this currently overwrites an existing vehicle of
+// the same id (unchanged from prior behaviour). Rejecting duplicates with a 409
+// is tracked separately in #31.
+func (s *Server) HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID              string `json:"id"`
 		Vehicle         string `json:"vehicle"`
@@ -204,8 +166,8 @@ func HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	if err := saveVehicle(req.ID, data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := s.store.SaveVehicle(r.Context(), req.ID, data); err != nil {
+		writeStoreError(w, err)
 		return
 	}
 
@@ -218,7 +180,7 @@ func HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 // present in the request body are changed; everything else is preserved. Today
 // this exists primarily so an excess_rate can be set on a vehicle that already
 // exists (it can't only be settable at creation time).
-func HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "vehicle ID required", http.StatusBadRequest)
@@ -235,9 +197,9 @@ func HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := loadVehicle(id)
+	data, err := s.store.GetVehicle(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
 
@@ -249,8 +211,8 @@ func HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
 		data.Plan.ExcessRate = *req.ExcessRate
 	}
 
-	if err := saveVehicle(id, data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := s.store.SaveVehicle(r.Context(), id, data); err != nil {
+		writeStoreError(w, err)
 		return
 	}
 
@@ -259,7 +221,7 @@ func HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleAddReading adds a new odometer reading
-func HandleAddReading(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleAddReading(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "vehicle ID required", http.StatusBadRequest)
@@ -280,9 +242,9 @@ func HandleAddReading(w http.ResponseWriter, r *http.Request) {
 		req.Date = time.Now().Format("2006-01-02")
 	}
 
-	data, err := loadVehicle(id)
+	data, err := s.store.GetVehicle(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
 
@@ -298,10 +260,8 @@ func HandleAddReading(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data.Readings[req.Date] = req.Miles
-
-	if err := saveVehicle(id, data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := s.store.PutReading(r.Context(), id, req.Date, req.Miles); err != nil {
+		writeStoreError(w, err)
 		return
 	}
 
@@ -314,16 +274,16 @@ func HandleAddReading(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetReadings returns all readings for a vehicle
-func HandleGetReadings(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleGetReadings(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "vehicle ID required", http.StatusBadRequest)
 		return
 	}
 
-	data, err := loadVehicle(id)
+	data, err := s.store.GetVehicle(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
 
@@ -340,7 +300,7 @@ func HandleGetReadings(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleDeleteReading deletes a reading for a specific date
-func HandleDeleteReading(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleDeleteReading(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	date := r.PathValue("date")
 	if id == "" || date == "" {
@@ -348,21 +308,8 @@ func HandleDeleteReading(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := loadVehicle(id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	if _, exists := data.Readings[date]; !exists {
-		http.Error(w, "reading not found", http.StatusNotFound)
-		return
-	}
-
-	delete(data.Readings, date)
-
-	if err := saveVehicle(id, data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := s.store.DeleteReading(r.Context(), id, date); err != nil {
+		writeStoreError(w, err)
 		return
 	}
 
@@ -371,16 +318,16 @@ func HandleDeleteReading(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetGraphData returns data formatted for graphing
-func HandleGetGraphData(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleGetGraphData(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "vehicle ID required", http.StatusBadRequest)
 		return
 	}
 
-	data, err := loadVehicle(id)
+	data, err := s.store.GetVehicle(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
 
@@ -410,30 +357,19 @@ func HandleGetGraphData(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleGetCurrent returns the current default vehicle
-func HandleGetCurrent(w http.ResponseWriter, r *http.Request) {
-	dir, err := getMileMinderDir()
+func (s *Server) HandleGetCurrent(w http.ResponseWriter, r *http.Request) {
+	current, err := s.store.GetCurrent(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	data, err := os.ReadFile(filepath.Join(dir, "current"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"current": ""})
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStoreError(w, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"current": strings.TrimSpace(string(data))})
+	json.NewEncoder(w).Encode(map[string]string{"current": current})
 }
 
 // HandleSetCurrent sets the current default vehicle
-func HandleSetCurrent(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleSetCurrent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID string `json:"id"`
 	}
@@ -442,20 +378,8 @@ func HandleSetCurrent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir, err := getMileMinderDir()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Verify vehicle exists
-	if _, err := os.Stat(filepath.Join(dir, req.ID+".yml")); os.IsNotExist(err) {
-		http.Error(w, "vehicle not found", http.StatusNotFound)
-		return
-	}
-
-	if err := os.WriteFile(filepath.Join(dir, "current"), []byte(req.ID), 0644); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := s.store.SetCurrent(r.Context(), req.ID); err != nil {
+		writeStoreError(w, err)
 		return
 	}
 
@@ -464,45 +388,25 @@ func HandleSetCurrent(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleFleet returns status for all vehicles
-func HandleFleet(w http.ResponseWriter, r *http.Request) {
-	dir, err := getMileMinderDir()
+func (s *Server) HandleFleet(w http.ResponseWriter, r *http.Request) {
+	records, err := s.store.ListVehicles(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeStoreError(w, err)
+		return
+	}
+
+	defaultID, err := s.store.GetCurrent(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
 		return
 	}
 
 	// Always serialise an empty array (not null) for Vehicles so the shape is
 	// stable for clients.
 	fleet := []VehicleStatus{}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(FleetResponse{Vehicles: fleet, Insights: calc.ComputeFleetInsights(fleet)})
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Read default vehicle
-	defaultID := ""
-	if data, err := os.ReadFile(filepath.Join(dir, "current")); err == nil {
-		defaultID = strings.TrimSpace(string(data))
-	}
-
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".yml" {
-			continue
-		}
-		id := strings.TrimSuffix(e.Name(), ".yml")
-		v, err := loadVehicle(id)
-		if err != nil {
-			continue
-		}
-		status := calc.ComputeStatus(id, v)
-		status.IsDefault = id == defaultID
+	for _, rec := range records {
+		status := calc.ComputeStatus(rec.ID, rec.Data)
+		status.IsDefault = rec.ID == defaultID
 		fleet = append(fleet, status)
 	}
 
@@ -516,16 +420,16 @@ func HandleFleet(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleExportCSV exports readings as CSV
-func HandleExportCSV(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleExportCSV(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "vehicle ID required", http.StatusBadRequest)
 		return
 	}
 
-	data, err := loadVehicle(id)
+	data, err := s.store.GetVehicle(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		writeStoreError(w, err)
 		return
 	}
 
