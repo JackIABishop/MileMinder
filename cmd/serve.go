@@ -5,9 +5,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 
 	"github.com/jackiabishop/mileminder/internal/api"
+	"github.com/jackiabishop/mileminder/internal/auth/filestore"
+	"github.com/jackiabishop/mileminder/internal/storage/yamlstore"
 	"github.com/jackiabishop/mileminder/internal/web"
 	"github.com/spf13/cobra"
 )
@@ -26,26 +29,15 @@ and viewing graphs of your usage against your allowance.`,
 		addr := fmt.Sprintf(":%d", port)
 		url := fmt.Sprintf("http://localhost:%d", port)
 
-		store, err := openStore()
+		var handler http.Handler
+		var err error
+		if hostedMode(cmd) {
+			handler, err = hostedHandler(cmd, devMode, url)
+		} else {
+			handler, err = singleUserHandler(devMode, url)
+		}
 		if err != nil {
 			return err
-		}
-
-		var handler http.Handler
-
-		if devMode {
-			// In dev mode, only serve API - frontend runs separately via npm run dev
-			fmt.Println("🔧 Development mode: API only")
-			fmt.Printf("   API server: %s/api\n", url)
-			fmt.Println("   Run 'npm run dev' in the web/ directory for the frontend")
-			handler = api.NewRouter(store, "")
-		} else {
-			// Production mode: serve embedded files
-			staticFS := web.GetFS()
-			if staticFS == nil {
-				return fmt.Errorf("web UI not built; run 'cd web && npm run build' first, or use --dev mode")
-			}
-			handler = api.NewRouterWithFS(store, staticFS)
 		}
 
 		fmt.Printf("🚗 MileMinder Web UI starting at %s\n", url)
@@ -57,6 +49,87 @@ and viewing graphs of your usage against your allowance.`,
 
 		return http.ListenAndServe(addr, handler)
 	},
+}
+
+// singleUserHandler builds the default, no-auth handler over the local
+// ~/.mileminder store — behaviour unchanged from before Phase 2.
+func singleUserHandler(devMode bool, url string) (http.Handler, error) {
+	store, err := openStore()
+	if err != nil {
+		return nil, err
+	}
+	if devMode {
+		fmt.Println("🔧 Development mode: API only")
+		fmt.Printf("   API server: %s/api/v1\n", url)
+		fmt.Println("   Run 'npm run dev' in the web/ directory for the frontend")
+		return api.NewRouter(store, ""), nil
+	}
+	staticFS := web.GetFS()
+	if staticFS == nil {
+		return nil, fmt.Errorf("web UI not built; run 'cd web && npm run build' first, or use --dev mode")
+	}
+	return api.NewRouterWithFS(store, staticFS), nil
+}
+
+// hostedHandler builds the multi-tenant handler: per-user YAML directories plus
+// file-backed user/session stores under the hosted data root. Auth gates every
+// data endpoint.
+func hostedHandler(cmd *cobra.Command, devMode bool, url string) (http.Handler, error) {
+	dataDir, err := hostedDataDir(cmd)
+	if err != nil {
+		return nil, err
+	}
+	secure, _ := cmd.Flags().GetBool("secure-cookies")
+	cfg := api.HostedConfig{
+		Users:         filestore.NewUserStore(dataDir),
+		Sessions:      filestore.NewSessionStore(dataDir),
+		Tenants:       yamlstore.NewTenants(dataDir),
+		SecureCookies: secure,
+	}
+
+	fmt.Printf("🔐 Hosted (multi-user) mode — data root: %s\n", dataDir)
+	if !secure {
+		fmt.Println("   ⚠  secure cookies disabled (--secure-cookies=false); use only over plain-HTTP localhost")
+	}
+
+	if devMode {
+		fmt.Println("🔧 Development mode: API only")
+		fmt.Printf("   API server: %s/api/v1\n", url)
+		return api.NewHostedRouterDir(cfg, ""), nil
+	}
+	staticFS := web.GetFS()
+	if staticFS == nil {
+		return nil, fmt.Errorf("web UI not built; run 'cd web && npm run build' first, or use --dev mode")
+	}
+	return api.NewHostedRouter(cfg, staticFS), nil
+}
+
+// hostedMode is true when --hosted is set or MILEMINDER_HOSTED is truthy.
+func hostedMode(cmd *cobra.Command) bool {
+	if v, _ := cmd.Flags().GetBool("hosted"); v {
+		return true
+	}
+	switch os.Getenv("MILEMINDER_HOSTED") {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
+}
+
+// hostedDataDir resolves the hosted data root: --data-dir, else
+// MILEMINDER_DATA_DIR, else ~/.mileminder-hosted.
+func hostedDataDir(cmd *cobra.Command) (string, error) {
+	if dir, _ := cmd.Flags().GetString("data-dir"); dir != "" {
+		return dir, nil
+	}
+	if dir := os.Getenv("MILEMINDER_DATA_DIR"); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locate home directory: %w", err)
+	}
+	return filepath.Join(home, ".mileminder-hosted"), nil
 }
 
 func openBrowser(url string) {
@@ -79,4 +152,7 @@ func init() {
 	serveCmd.Flags().IntP("port", "p", 8080, "Port to run the server on")
 	serveCmd.Flags().Bool("no-browser", false, "Don't open browser automatically")
 	serveCmd.Flags().Bool("dev", false, "Development mode (API only, no static files)")
+	serveCmd.Flags().Bool("hosted", false, "Hosted multi-user mode: require login, isolate data per user (env: MILEMINDER_HOSTED)")
+	serveCmd.Flags().String("data-dir", "", "Hosted-mode data root (default ~/.mileminder-hosted; env: MILEMINDER_DATA_DIR)")
+	serveCmd.Flags().Bool("secure-cookies", true, "Set the Secure flag on session cookies (disable only for plain-HTTP localhost testing)")
 }

@@ -1,6 +1,10 @@
 // API client for MileMinder backend
 
-const API_BASE = '/api';
+import { goto } from '$app/navigation';
+import { get } from 'svelte/store';
+import { mode } from './session';
+
+const API_BASE = '/api/v1';
 
 export interface VehicleListItem {
 	id: string;
@@ -104,6 +108,14 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
 		}
 	});
 
+	// In hosted mode a 401 on a data endpoint means the session lapsed: bounce to
+	// the login page. Auth endpoints (/auth/*) are excluded — the login page shows
+	// their errors inline rather than redirecting to itself.
+	if (response.status === 401 && get(mode) === 'hosted' && !url.includes('/auth/')) {
+		goto('/login');
+		throw new Error('authentication required');
+	}
+
 	if (!response.ok) {
 		const text = await response.text();
 		throw new Error(text || `HTTP ${response.status}`);
@@ -173,6 +185,54 @@ export async function setCurrentVehicle(id: string): Promise<{ status: string; c
 // Fleet
 export async function getFleet(): Promise<FleetResponse> {
 	return fetchJSON<FleetResponse>(`${API_BASE}/fleet`);
+}
+
+// Server mode. "single-user" is the self-hosted / local binary (no auth UI);
+// "hosted" is the multi-tenant deployment (login required to reach data).
+export type ServerMode = 'single-user' | 'hosted';
+
+export interface Meta {
+	mode: ServerMode;
+}
+
+// getMeta is called on boot, before any login, to decide whether to show the
+// login flow. It requires no authentication.
+export async function getMeta(): Promise<Meta> {
+	return fetchJSON<Meta>(`${API_BASE}/meta`);
+}
+
+// Auth (hosted mode only)
+export interface User {
+	id: string;
+	email: string;
+	created_at: string;
+}
+
+export interface AuthResponse {
+	token: string;
+	user: User;
+}
+
+export async function login(email: string, password: string): Promise<AuthResponse> {
+	return fetchJSON<AuthResponse>(`${API_BASE}/auth/login`, {
+		method: 'POST',
+		body: JSON.stringify({ email, password })
+	});
+}
+
+export async function signup(email: string, password: string): Promise<AuthResponse> {
+	return fetchJSON<AuthResponse>(`${API_BASE}/auth/signup`, {
+		method: 'POST',
+		body: JSON.stringify({ email, password })
+	});
+}
+
+export async function logout(): Promise<void> {
+	await fetchJSON(`${API_BASE}/auth/logout`, { method: 'POST' });
+}
+
+export async function getMe(): Promise<User> {
+	return fetchJSON<User>(`${API_BASE}/auth/me`);
 }
 
 // Export CSV (returns download URL)

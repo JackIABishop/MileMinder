@@ -1,15 +1,28 @@
 <script lang="ts">
 	import '../app.css';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { listVehicles, getCurrentVehicle, setCurrentVehicle, type VehicleListItem } from '$lib/api';
+	import { initAuth, mode, user, authReady } from '$lib/auth';
 
 	let vehicles: VehicleListItem[] = [];
 	let currentVehicle: string = '';
 	let showVehicleMenu = false;
 
+	// The login page renders bare (no sidebar). In hosted mode an unauthenticated
+	// visitor is bounced there; single-user mode never shows any of this.
+	$: isLoginRoute = $page.url.pathname === '/login';
+	$: needsLogin = $mode === 'hosted' && !$user;
+	$: showChrome = $authReady && !isLoginRoute && !needsLogin;
+
 	onMount(async () => {
-		await loadVehicles();
+		await initAuth();
+		if (needsLogin && !isLoginRoute) {
+			goto('/login');
+			return;
+		}
+		if (!needsLogin) await loadVehicles();
 	});
 
 	async function loadVehicles() {
@@ -40,6 +53,13 @@
 	$: currentVehicleData = vehicles.find(v => v.id === currentVehicle);
 </script>
 
+{#if isLoginRoute}
+	<slot />
+{:else if !$authReady}
+	<div class="min-h-screen flex items-center justify-center text-carbon-500">Loading…</div>
+{:else if needsLogin}
+	<div class="min-h-screen flex items-center justify-center text-carbon-500">Redirecting to sign in…</div>
+{:else}
 <div class="min-h-screen flex">
 	<!-- Sidebar -->
 	<aside class="w-64 bg-carbon-900/40 border-r border-carbon-800 flex flex-col">
@@ -155,3 +175,4 @@
 		<slot />
 	</main>
 </div>
+{/if}

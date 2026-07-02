@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jackiabishop/mileminder/internal/atomicfile"
 	"github.com/jackiabishop/mileminder/internal/model"
 	"github.com/jackiabishop/mileminder/internal/storage"
 	"gopkg.in/yaml.v3"
@@ -84,7 +85,8 @@ func (s *Store) writeVehicle(id string, data *model.VehicleData) error {
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return fmt.Errorf("create store dir: %w", err)
 	}
-	return s.atomicWrite(s.vehiclePath(id), func(f *os.File) error {
+	// 0644 matches the perms the previous os.Create/os.WriteFile paths produced.
+	return atomicfile.Write(s.vehiclePath(id), 0644, func(f *os.File) error {
 		enc := yaml.NewEncoder(f)
 		if err := enc.Encode(data); err != nil {
 			enc.Close()
@@ -92,37 +94,6 @@ func (s *Store) writeVehicle(id string, data *model.VehicleData) error {
 		}
 		return enc.Close()
 	})
-}
-
-// atomicWrite writes to a temp file in the same directory as path, then renames
-// it over path. write is responsible for producing the file's contents.
-func (s *Store) atomicWrite(path string, write func(*os.File) error) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	// Best-effort cleanup if we bail before the rename.
-	defer os.Remove(tmpName)
-
-	// os.CreateTemp makes the file 0600; match the 0644 the previous
-	// os.Create/os.WriteFile paths produced so on-disk perms are unchanged.
-	if err := tmp.Chmod(0644); err != nil {
-		tmp.Close()
-		return fmt.Errorf("chmod temp file: %w", err)
-	}
-
-	if err := write(tmp); err != nil {
-		tmp.Close()
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename into place %s: %w", path, err)
-	}
-	return nil
 }
 
 // ListVehicles returns all vehicles, skipping non-.yml entries and any file that
@@ -248,7 +219,7 @@ func (s *Store) SetCurrent(ctx context.Context, id string) error {
 		return fmt.Errorf("create store dir: %w", err)
 	}
 	path := filepath.Join(s.dir, currentFile)
-	if err := s.atomicWrite(path, func(f *os.File) error {
+	if err := atomicfile.Write(path, 0644, func(f *os.File) error {
 		_, err := f.WriteString(id)
 		return err
 	}); err != nil {

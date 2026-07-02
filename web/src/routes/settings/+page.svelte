@@ -1,6 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { listVehicles, createVehicle, getVehicle, updatePlan, formatDate, type VehicleListItem } from '$lib/api';
+	import { mode, user, logout } from '$lib/auth';
+
+	async function handleLogout() {
+		await logout();
+		goto('/login');
+	}
 
 	let vehicles: VehicleListItem[] = [];
 	let loading = true;
@@ -138,6 +145,20 @@
 				{success}
 			</p>
 		</div>
+	{/if}
+
+	{#if $mode === 'hosted'}
+		<!-- Account Section (hosted mode only) -->
+		<section class="mb-8">
+			<h2 class="text-xl font-semibold text-carbon-100 mb-4">Account</h2>
+			<div class="flex items-center justify-between p-4 bg-carbon-900/40 border border-carbon-800 rounded-xl">
+				<div>
+					<p class="text-sm text-carbon-400">Signed in as</p>
+					<p class="text-carbon-100 font-medium">{$user?.email ?? '—'}</p>
+				</div>
+				<button class="btn-secondary" on:click={handleLogout}>Sign out</button>
+			</div>
+		</section>
 	{/if}
 
 	<!-- Vehicles Section -->
