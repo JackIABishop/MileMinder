@@ -5,15 +5,10 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
-
-	"github.com/jackiabishop/mileminder/internal/model"
 )
 
 var addCmd = &cobra.Command{
@@ -41,21 +36,18 @@ var addCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("invalid odometer value: %v", err)
 		}
-		// Load existing data
-		home, err := os.UserHomeDir()
+
+		st, err := openStore()
 		if err != nil {
 			return err
 		}
-		filePath := filepath.Join(home, ".mileminder", carID+".yml")
-		raw, err := os.ReadFile(filePath)
+		ctx := cmd.Context()
+
+		// Load existing data to validate against the current max reading.
+		data, err := st.GetVehicle(ctx, carID)
 		if err != nil {
 			return err
 		}
-		var data model.VehicleData
-		if err := yaml.Unmarshal(raw, &data); err != nil {
-			return err
-		}
-		// Validate against max existing reading
 		maxMiles := 0
 		for _, m := range data.Readings {
 			if m > maxMiles {
@@ -65,17 +57,8 @@ var addCmd = &cobra.Command{
 		if miles < maxMiles && !force {
 			return fmt.Errorf("new reading %d is less than existing max %d; use --force to override", miles, maxMiles)
 		}
-		// Upsert reading
-		data.Readings[dateStr] = miles
-		// Write back
-		f, err := os.Create(filePath)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		enc := yaml.NewEncoder(f)
-		defer enc.Close()
-		if err := enc.Encode(&data); err != nil {
+
+		if err := st.PutReading(ctx, carID, dateStr, miles); err != nil {
 			return err
 		}
 		fmt.Printf("Recorded odometer reading %d for %s on %s\n", miles, carID, dateStr)
