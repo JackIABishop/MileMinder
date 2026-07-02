@@ -2,48 +2,34 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"time"
 
 	"github.com/guptarohit/asciigraph"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/jackiabishop/mileminder/internal/calc"
-	"github.com/jackiabishop/mileminder/internal/model"
 )
 
 var graphCmd = &cobra.Command{
 	Use:   "graph",
 	Short: "ASCII graph of actual vs. ideal mileminder over time",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Determine vehicle ID
-		carID, _ := cmd.Flags().GetString("car")
-		if carID == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return err
-			}
-			data, err := os.ReadFile(filepath.Join(home, ".mileminder", "current"))
-			if err != nil {
-				return fmt.Errorf("no vehicle specified and no default set; use --car or switch")
-			}
-			carID = string(data)
+		st, err := openStore()
+		if err != nil {
+			return err
+		}
+		ctx := cmd.Context()
+
+		// Determine vehicle ID (flag or stored default).
+		carFlag, _ := cmd.Flags().GetString("car")
+		carID, err := defaultVehicleID(ctx, st, carFlag)
+		if err != nil {
+			return err
 		}
 
-		// Load YAML
-		home, err := os.UserHomeDir()
+		v, err := st.GetVehicle(ctx, carID)
 		if err != nil {
-			return err
-		}
-		raw, err := os.ReadFile(filepath.Join(home, ".mileminder", carID+".yml"))
-		if err != nil {
-			return err
-		}
-		var v model.VehicleData
-		if err := yaml.Unmarshal(raw, &v); err != nil {
 			return err
 		}
 

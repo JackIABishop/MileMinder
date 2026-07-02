@@ -6,16 +6,12 @@ package cmd
 import (
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/jackiabishop/mileminder/internal/calc"
-	"github.com/jackiabishop/mileminder/internal/model"
 )
 
 // statusCmd represents the status command
@@ -23,38 +19,27 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show allowance usage",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Determine vehicle ID (flag or default)
-		carID, _ := cmd.Flags().GetString("car")
-		if carID == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return err
-			}
-			data, err := os.ReadFile(filepath.Join(home, ".mileminder", "current"))
-			if err != nil {
-				return fmt.Errorf("no vehicle specified and no default set; use --car or switch")
-			}
-			carID = strings.TrimSpace(string(data))
+		st, err := openStore()
+		if err != nil {
+			return err
+		}
+		ctx := cmd.Context()
+
+		// Determine vehicle ID (flag or stored default).
+		carFlag, _ := cmd.Flags().GetString("car")
+		carID, err := defaultVehicleID(ctx, st, carFlag)
+		if err != nil {
+			return err
 		}
 
-		// Load vehicle data
-		home, err := os.UserHomeDir()
+		data, err := st.GetVehicle(ctx, carID)
 		if err != nil {
-			return err
-		}
-		filePath := filepath.Join(home, ".mileminder", carID+".yml")
-		raw, err := os.ReadFile(filePath)
-		if err != nil {
-			return err
-		}
-		var data model.VehicleData
-		if err := yaml.Unmarshal(raw, &data); err != nil {
 			return err
 		}
 
 		// Canonical status math lives in internal/calc (single source of truth,
 		// shared with the web API).
-		s := calc.ComputeStatus(carID, &data)
+		s := calc.ComputeStatus(carID, data)
 
 		termLeftStr := fmt.Sprintf("%dy %dd", s.YearsLeftTerm, s.DaysLeftTerm)
 

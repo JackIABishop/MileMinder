@@ -26,6 +26,11 @@ and viewing graphs of your usage against your allowance.`,
 		addr := fmt.Sprintf(":%d", port)
 		url := fmt.Sprintf("http://localhost:%d", port)
 
+		store, err := openStore()
+		if err != nil {
+			return err
+		}
+
 		var handler http.Handler
 
 		if devMode {
@@ -33,14 +38,14 @@ and viewing graphs of your usage against your allowance.`,
 			fmt.Println("🔧 Development mode: API only")
 			fmt.Printf("   API server: %s/api\n", url)
 			fmt.Println("   Run 'npm run dev' in the web/ directory for the frontend")
-			handler = api.NewRouter("")
+			handler = api.NewRouter(store, "")
 		} else {
 			// Production mode: serve embedded files
 			staticFS := web.GetFS()
 			if staticFS == nil {
 				return fmt.Errorf("web UI not built; run 'cd web && npm run build' first, or use --dev mode")
 			}
-			handler = api.NewRouterWithFS(staticFS)
+			handler = api.NewRouterWithFS(store, staticFS)
 		}
 
 		fmt.Printf("🚗 MileMinder Web UI starting at %s\n", url)

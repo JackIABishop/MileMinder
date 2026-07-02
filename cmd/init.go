@@ -7,13 +7,11 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 
 	"github.com/jackiabishop/mileminder/internal/model"
 )
@@ -88,29 +86,15 @@ var initCmd = &cobra.Command{
 			},
 		}
 
-		home, err := os.UserHomeDir()
+		st, err := openStore()
 		if err != nil {
 			return err
 		}
-		dir := filepath.Join(home, ".mileminder")
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := st.SaveVehicle(cmd.Context(), carID, &data); err != nil {
 			return err
 		}
 
-		filePath := filepath.Join(dir, carID+".yml")
-		f, err := os.Create(filePath)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
-		enc := yaml.NewEncoder(f)
-		defer enc.Close()
-		if err := enc.Encode(&data); err != nil {
-			return err
-		}
-
-		fmt.Printf("Created plan for %s at %s\n", carID, filePath)
+		fmt.Printf("Created plan for %s\n", carID)
 		return nil
 	},
 }

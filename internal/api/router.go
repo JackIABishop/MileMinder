@@ -3,12 +3,15 @@ package api
 import (
 	"io/fs"
 	"net/http"
+
+	"github.com/jackiabishop/mileminder/internal/storage"
 )
 
-// NewRouter creates and configures the API router (for dev mode, API only)
-func NewRouter(staticDir string) http.Handler {
+// NewRouter creates and configures the API router (for dev mode, API only),
+// backed by store.
+func NewRouter(store storage.Store, staticDir string) http.Handler {
 	mux := http.NewServeMux()
-	registerAPIRoutes(mux)
+	registerAPIRoutes(mux, NewServer(store))
 
 	// Serve static files from disk (for development)
 	if staticDir != "" {
@@ -19,10 +22,11 @@ func NewRouter(staticDir string) http.Handler {
 	return corsMiddleware(mux)
 }
 
-// NewRouterWithFS creates a router with embedded filesystem for production
-func NewRouterWithFS(staticFS fs.FS) http.Handler {
+// NewRouterWithFS creates a router with embedded filesystem for production,
+// backed by store.
+func NewRouterWithFS(store storage.Store, staticFS fs.FS) http.Handler {
 	mux := http.NewServeMux()
-	registerAPIRoutes(mux)
+	registerAPIRoutes(mux, NewServer(store))
 
 	// Serve embedded static files
 	fileServer := http.FileServer(http.FS(staticFS))
@@ -31,20 +35,20 @@ func NewRouterWithFS(staticFS fs.FS) http.Handler {
 	return corsMiddleware(mux)
 }
 
-// registerAPIRoutes registers all API endpoints
-func registerAPIRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/vehicles", HandleListVehicles)
-	mux.HandleFunc("GET /api/vehicles/{id}", HandleGetVehicle)
-	mux.HandleFunc("POST /api/vehicles", HandleCreateVehicle)
-	mux.HandleFunc("PATCH /api/vehicles/{id}", HandleUpdatePlan)
-	mux.HandleFunc("POST /api/vehicles/{id}/readings", HandleAddReading)
-	mux.HandleFunc("GET /api/vehicles/{id}/readings", HandleGetReadings)
-	mux.HandleFunc("DELETE /api/vehicles/{id}/readings/{date}", HandleDeleteReading)
-	mux.HandleFunc("GET /api/vehicles/{id}/graph", HandleGetGraphData)
-	mux.HandleFunc("GET /api/vehicles/{id}/export", HandleExportCSV)
-	mux.HandleFunc("GET /api/current", HandleGetCurrent)
-	mux.HandleFunc("PUT /api/current", HandleSetCurrent)
-	mux.HandleFunc("GET /api/fleet", HandleFleet)
+// registerAPIRoutes registers all API endpoints against s.
+func registerAPIRoutes(mux *http.ServeMux, s *Server) {
+	mux.HandleFunc("GET /api/vehicles", s.HandleListVehicles)
+	mux.HandleFunc("GET /api/vehicles/{id}", s.HandleGetVehicle)
+	mux.HandleFunc("POST /api/vehicles", s.HandleCreateVehicle)
+	mux.HandleFunc("PATCH /api/vehicles/{id}", s.HandleUpdatePlan)
+	mux.HandleFunc("POST /api/vehicles/{id}/readings", s.HandleAddReading)
+	mux.HandleFunc("GET /api/vehicles/{id}/readings", s.HandleGetReadings)
+	mux.HandleFunc("DELETE /api/vehicles/{id}/readings/{date}", s.HandleDeleteReading)
+	mux.HandleFunc("GET /api/vehicles/{id}/graph", s.HandleGetGraphData)
+	mux.HandleFunc("GET /api/vehicles/{id}/export", s.HandleExportCSV)
+	mux.HandleFunc("GET /api/current", s.HandleGetCurrent)
+	mux.HandleFunc("PUT /api/current", s.HandleSetCurrent)
+	mux.HandleFunc("GET /api/fleet", s.HandleFleet)
 }
 
 // spaHandlerDir serves the SPA from disk, falling back to index.html for client-side routing

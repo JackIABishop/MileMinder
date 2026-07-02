@@ -4,11 +4,12 @@ Copyright © 2025 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jackiabishop/mileminder/internal/storage"
 )
 
 var switchCmd = &cobra.Command{
@@ -18,22 +19,16 @@ var switchCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		vehicleID := args[0]
 
-		home, err := os.UserHomeDir()
+		st, err := openStore()
 		if err != nil {
-			return fmt.Errorf("unable to find home directory: %w", err)
-		}
-		dir := filepath.Join(home, ".mileminder")
-		filePath := filepath.Join(dir, vehicleID+".yml")
-
-		// Ensure the YAML file exists
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			return fmt.Errorf("vehicle %q not found; have you initialized it?", vehicleID)
+			return err
 		}
 
-		// Write the current default vehicle ID
-		currentFile := filepath.Join(dir, "current")
-		if err := os.WriteFile(currentFile, []byte(vehicleID), 0644); err != nil {
-			return fmt.Errorf("failed to write default vehicle: %w", err)
+		if err := st.SetCurrent(cmd.Context(), vehicleID); err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				return fmt.Errorf("vehicle %q not found; have you initialized it?", vehicleID)
+			}
+			return fmt.Errorf("failed to set default vehicle: %w", err)
 		}
 
 		fmt.Printf("Default vehicle set to %s\n", vehicleID)
