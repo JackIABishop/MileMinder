@@ -18,6 +18,10 @@ type HostedConfig struct {
 	Users    auth.UserStore
 	Sessions auth.SessionStore
 	Tenants  storage.Tenants
+
+	// Notifier is wired in hosted mode for flows that need outbound messages.
+	// Alert scheduling uses it outside the router today; password reset (#33)
+	// will read it from handlers.
 	Notifier notify.Channel
 
 	AlertPrefs alerts.PrefsStore
