@@ -45,3 +45,4 @@ immutability is exactly what keeps the log honest instead of drifting.
 - [ADR-0003](0003-storage-abstraction-repository-pattern.md) — Storage abstraction via the repository pattern
 - [ADR-0004](0004-authentication-and-session-model.md) — Authentication & session model
 - [ADR-0005](0005-optional-allowance-plan.md) — Optional allowance plan
+- [ADR-0006](0006-notification-channel-and-alert-scheduler.md) — Notification channel and alert scheduler
