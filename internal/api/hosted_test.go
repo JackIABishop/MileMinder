@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/jackiabishop/mileminder/internal/alerts"
 	"github.com/jackiabishop/mileminder/internal/api"
 	"github.com/jackiabishop/mileminder/internal/auth"
 	"github.com/jackiabishop/mileminder/internal/storage"
@@ -23,6 +24,7 @@ type hostedFixture struct {
 	users    *auth.MemoryUserStore
 	sessions *auth.MemorySessionStore
 	tenants  *storage.MemoryTenants
+	prefs    *alerts.MemoryPrefsStore
 }
 
 // newHostedServer builds a hosted server on in-memory stores. mutate can adjust
@@ -34,11 +36,13 @@ func newHostedServer(t *testing.T, mutate func(*api.HostedConfig)) hostedFixture
 		users:    auth.NewMemoryUserStore(),
 		sessions: auth.NewMemorySessionStore(),
 		tenants:  storage.NewMemoryTenants(),
+		prefs:    alerts.NewMemoryPrefsStore(),
 	}
 	cfg := api.HostedConfig{
 		Users:          f.users,
 		Sessions:       f.sessions,
 		Tenants:        f.tenants,
+		AlertPrefs:     f.prefs,
 		SecureCookies:  false, // plain-HTTP httptest
 		AuthRatePerSec: 1000,
 		AuthRateBurst:  1000,
@@ -370,6 +374,73 @@ func TestHostedRateLimitsAuth(t *testing.T) {
 	}
 	if !got429 {
 		t.Fatal("expected a 429 after exhausting the auth rate-limit burst")
+	}
+}
+
+func TestHostedAlertPrefsDefaultAndUpdate(t *testing.T) {
+	f := newHostedServer(t, nil)
+	client := newClient(t)
+	signup(t, f.srv, client, "alice@example.com", "password123")
+
+	resp, err := client.Get(f.srv.URL + "/api/v1/alerts/prefs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get prefs: want 200, got %d", resp.StatusCode)
+	}
+	var got alerts.Prefs
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Enabled || got.Threshold != 100 {
+		t.Fatalf("default prefs = %+v, want enabled threshold 100", got)
+	}
+
+	req, _ := http.NewRequest(http.MethodPut, f.srv.URL+"/api/v1/alerts/prefs", strings.NewReader(`{"enabled":false,"threshold":85}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("put prefs: want 200, got %d (%s)", resp.StatusCode, b)
+	}
+	var updated alerts.Prefs
+	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Enabled || updated.Threshold != 85 {
+		t.Fatalf("updated prefs = %+v, want disabled threshold 85", updated)
+	}
+}
+
+func TestHostedAlertPrefsValidationAndAuth(t *testing.T) {
+	f := newHostedServer(t, nil)
+
+	resp, err := http.Get(f.srv.URL + "/api/v1/alerts/prefs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated get prefs: want 401, got %d", resp.StatusCode)
+	}
+
+	client := newClient(t)
+	signup(t, f.srv, client, "alice@example.com", "password123")
+	req, _ := http.NewRequest(http.MethodPut, f.srv.URL+"/api/v1/alerts/prefs", strings.NewReader(`{"threshold":0}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid threshold: want 400, got %d", resp.StatusCode)
 	}
 }
 

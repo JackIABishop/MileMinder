@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, type VehicleListItem, type VehicleStatus } from '$lib/api';
+	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, type VehicleListItem, type VehicleStatus } from '$lib/api';
 	import { mode, user, logout } from '$lib/auth';
 
 	async function handleLogout() {
@@ -15,6 +15,9 @@
 	let success = '';
 	let showAddForm = false;
 	let submitting = false;
+	let alertPrefs = { enabled: true, threshold: 100 };
+	let loadingAlerts = false;
+	let savingAlerts = false;
 
 	// Per-vehicle excess rate (pence/excess mile), loaded from each vehicle's status.
 	let excessRates: Record<string, number> = {};
@@ -44,7 +47,40 @@
 
 	onMount(async () => {
 		await loadVehicles();
+		if ($mode === 'hosted') {
+			await loadAlertPrefs();
+		}
 	});
+
+	async function loadAlertPrefs() {
+		loadingAlerts = true;
+		try {
+			const prefs = await getAlertPrefs();
+			alertPrefs = { enabled: prefs.enabled, threshold: prefs.threshold };
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to load alert preferences';
+		} finally {
+			loadingAlerts = false;
+		}
+	}
+
+	async function handleSaveAlertPrefs() {
+		if (alertPrefs.threshold <= 0) {
+			error = 'Alert threshold must be greater than 0';
+			return;
+		}
+		savingAlerts = true;
+		error = '';
+		try {
+			const prefs = await updateAlertPrefs(alertPrefs);
+			alertPrefs = { enabled: prefs.enabled, threshold: prefs.threshold };
+			success = 'Alert preferences updated.';
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to update alert preferences';
+		} finally {
+			savingAlerts = false;
+		}
+	}
 
 	async function loadVehicles() {
 		loading = true;
@@ -217,6 +253,37 @@
 					<p class="text-carbon-100 font-medium">{$user?.email ?? '—'}</p>
 				</div>
 				<button class="btn-secondary" on:click={handleLogout}>Sign out</button>
+			</div>
+		</section>
+
+		<section class="mb-8">
+			<h2 class="text-xl font-semibold text-carbon-100 mb-4">Alerts</h2>
+			<div class="p-4 bg-carbon-900/40 border border-carbon-800 rounded-xl">
+				{#if loadingAlerts}
+					<p class="text-carbon-400 text-sm">Loading alert preferences...</p>
+				{:else}
+					<div class="flex items-center justify-between gap-4">
+						<label class="flex items-center gap-3">
+							<input type="checkbox" bind:checked={alertPrefs.enabled} class="w-4 h-4 accent-accent-primary" />
+							<span class="text-carbon-100 font-medium">Email allowance alerts</span>
+						</label>
+						<button class="btn-secondary" on:click={handleSaveAlertPrefs} disabled={savingAlerts}>
+							{savingAlerts ? 'Saving...' : 'Save'}
+						</button>
+					</div>
+					<div class="mt-4 max-w-xs">
+						<label for="alertThreshold" class="label">Threshold (% used)</label>
+						<input
+							id="alertThreshold"
+							type="number"
+							bind:value={alertPrefs.threshold}
+							class="input font-mono"
+							min="1"
+							step="1"
+							disabled={!alertPrefs.enabled}
+						/>
+					</div>
+				{/if}
 			</div>
 		</section>
 	{/if}
