@@ -7,6 +7,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/jackiabishop/mileminder/internal/auth"
+	"github.com/jackiabishop/mileminder/internal/notify"
 	"github.com/jackiabishop/mileminder/internal/storage"
 )
 
@@ -16,6 +17,7 @@ type HostedConfig struct {
 	Users    auth.UserStore
 	Sessions auth.SessionStore
 	Tenants  storage.Tenants
+	Notifier notify.Channel
 
 	// SecureCookies sets the Secure flag on session cookies. True in real hosted
 	// deployments (TLS terminated at the edge); left false for plain-HTTP tests.

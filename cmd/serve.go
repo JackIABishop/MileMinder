@@ -2,14 +2,19 @@ package cmd
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
+	"github.com/jackiabishop/mileminder/internal/alerts"
 	"github.com/jackiabishop/mileminder/internal/api"
 	"github.com/jackiabishop/mileminder/internal/auth/filestore"
+	"github.com/jackiabishop/mileminder/internal/notify"
+	"github.com/jackiabishop/mileminder/internal/notify/smtpchannel"
 	"github.com/jackiabishop/mileminder/internal/storage/yamlstore"
 	"github.com/jackiabishop/mileminder/internal/web"
 	"github.com/spf13/cobra"
@@ -80,16 +85,46 @@ func hostedHandler(cmd *cobra.Command, devMode bool, url string) (http.Handler, 
 		return nil, err
 	}
 	secure, _ := cmd.Flags().GetBool("secure-cookies")
+	channel, err := notificationChannel()
+	if err != nil {
+		return nil, err
+	}
+	alertPrefs := alerts.NewFilePrefsStore(dataDir)
+	alertState := alerts.NewFileStateStore(dataDir)
+	users := filestore.NewUserStore(dataDir)
+	tenants := yamlstore.NewTenants(dataDir)
 	cfg := api.HostedConfig{
-		Users:         filestore.NewUserStore(dataDir),
+		Users:         users,
 		Sessions:      filestore.NewSessionStore(dataDir),
-		Tenants:       yamlstore.NewTenants(dataDir),
+		Tenants:       tenants,
+		Notifier:      channel,
 		SecureCookies: secure,
 	}
 
 	fmt.Printf("🔐 Hosted (multi-user) mode — data root: %s\n", dataDir)
 	if !secure {
 		fmt.Println("   ⚠  secure cookies disabled (--secure-cookies=false); use only over plain-HTTP localhost")
+	}
+	if noAlerts, _ := cmd.Flags().GetBool("no-alerts"); noAlerts {
+		fmt.Println("   alerts scheduler disabled (--no-alerts)")
+	} else {
+		interval, err := alertsInterval(cmd)
+		if err != nil {
+			return nil, err
+		}
+		scheduler := &alerts.Scheduler{
+			Users:    users,
+			Tenants:  tenants,
+			State:    alertState,
+			Prefs:    alertPrefs,
+			Channel:  channel,
+			Now:      time.Now,
+			Interval: interval,
+			BaseURL:  url,
+			Logger:   log.Default(),
+		}
+		go scheduler.Run(cmd.Context())
+		fmt.Printf("   alerts scheduler interval: %s\n", interval)
 	}
 
 	if devMode {
@@ -132,6 +167,42 @@ func hostedDataDir(cmd *cobra.Command) (string, error) {
 	return filepath.Join(home, ".mileminder-hosted"), nil
 }
 
+func alertsInterval(cmd *cobra.Command) (time.Duration, error) {
+	if !cmd.Flags().Changed("alerts-interval") {
+		if raw := os.Getenv("MILEMINDER_ALERTS_INTERVAL"); raw != "" {
+			d, err := time.ParseDuration(raw)
+			if err != nil {
+				return 0, fmt.Errorf("invalid MILEMINDER_ALERTS_INTERVAL %q: %w", raw, err)
+			}
+			if d <= 0 {
+				return 0, fmt.Errorf("MILEMINDER_ALERTS_INTERVAL must be greater than 0")
+			}
+			return d, nil
+		}
+	}
+	d, _ := cmd.Flags().GetDuration("alerts-interval")
+	if d <= 0 {
+		return 0, fmt.Errorf("--alerts-interval must be greater than 0")
+	}
+	return d, nil
+}
+
+func notificationChannel() (notify.Channel, error) {
+	cfg, ok, err := smtpchannel.ConfigFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		ch, err := smtpchannel.New(cfg)
+		if err != nil {
+			return nil, err
+		}
+		return ch, nil
+	}
+	fmt.Println("   ⚠  SMTP not configured; alerts will be logged instead of emailed")
+	return notify.LogChannel{Logger: log.Default()}, nil
+}
+
 func openBrowser(url string) {
 	var err error
 	switch runtime.GOOS {
@@ -155,4 +226,6 @@ func init() {
 	serveCmd.Flags().Bool("hosted", false, "Hosted multi-user mode: require login, isolate data per user (env: MILEMINDER_HOSTED)")
 	serveCmd.Flags().String("data-dir", "", "Hosted-mode data root (default ~/.mileminder-hosted; env: MILEMINDER_DATA_DIR)")
 	serveCmd.Flags().Bool("secure-cookies", true, "Set the Secure flag on session cookies (disable only for plain-HTTP localhost testing)")
+	serveCmd.Flags().Duration("alerts-interval", time.Hour, "Hosted alert scheduler interval (env: MILEMINDER_ALERTS_INTERVAL)")
+	serveCmd.Flags().Bool("no-alerts", false, "Disable the hosted alert scheduler")
 }
