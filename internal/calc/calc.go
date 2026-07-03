@@ -17,6 +17,7 @@ import (
 type Status struct {
 	ID                  string    `json:"id"`
 	Vehicle             string    `json:"vehicle"`
+	HasPlan             bool      `json:"has_plan"`
 	LatestReading       int       `json:"latest_reading"`
 	LatestDate          string    `json:"latest_date"`
 	TargetToday         float64   `json:"target_today"`
@@ -70,6 +71,8 @@ type Status struct {
 // construction. JSON tags mirror the web/iOS API contract.
 type FleetInsights struct {
 	TotalVehicles         int     `json:"total_vehicles"`
+	PolicyVehicles        int     `json:"policy_vehicles"`
+	PlainVehicles         int     `json:"plain_vehicles"`
 	CountOver             int     `json:"count_over"`               // cars with Delta > 0
 	CountUnder            int     `json:"count_under"`              // cars with Delta <= 0
 	NetDelta              float64 `json:"net_delta"`                // Σ Delta (miles; +ve = collectively over the allowance line)
@@ -93,13 +96,18 @@ func ComputeFleetInsights(statuses []Status) FleetInsights {
 	var worstPct float64
 	var sumPct float64
 	for i, s := range statuses {
+		insights.TotalAvgAnnualMileage += s.AvgAnnualMileage
+		if !s.HasPlan {
+			insights.PlainVehicles++
+			continue
+		}
+		insights.PolicyVehicles++
 		if s.Delta > 0 {
 			insights.CountOver++
 		} else {
 			insights.CountUnder++
 		}
 		insights.NetDelta += s.Delta
-		insights.TotalAvgAnnualMileage += s.AvgAnnualMileage
 		sumPct += s.PercentUsed
 		if worst < 0 || s.PercentUsed > worstPct {
 			worst = i
@@ -107,9 +115,11 @@ func ComputeFleetInsights(statuses []Status) FleetInsights {
 		}
 	}
 
-	insights.AvgPercentUsed = sumPct / float64(len(statuses))
-	insights.WorstOffenderID = statuses[worst].ID
-	insights.WorstOffenderVehicle = statuses[worst].Vehicle
+	if insights.PolicyVehicles > 0 {
+		insights.AvgPercentUsed = sumPct / float64(insights.PolicyVehicles)
+		insights.WorstOffenderID = statuses[worst].ID
+		insights.WorstOffenderVehicle = statuses[worst].Vehicle
+	}
 	return insights
 }
 
@@ -189,49 +199,110 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 	sort.Strings(dates)
 
 	latestDate := ""
-	latestMiles := data.Plan.StartMiles
+	latestMiles := 0
 	if len(dates) > 0 {
 		latestDate = dates[len(dates)-1]
 		latestMiles = data.Readings[latestDate]
 	}
 
+	readings := SortedReadings(data)
+
+	// Recent annual mileage: pace over the trailing 90 days, annualised. If
+	// there's less than 90 days of history, measure from the first reading.
+	recentAnnualMileage := 0.0
+	if len(readings) > 0 {
+		windowStart := today.AddDate(0, 0, -90)
+		if windowStart.Before(readings[0].Date) {
+			windowStart = readings[0].Date
+		}
+		windowDays := today.Sub(windowStart).Hours() / 24.0
+		if windowDays >= 1 {
+			if baseMiles, ok := OdometerAt(readings, windowStart); ok {
+				recentAnnualMileage = (float64(latestMiles) - baseMiles) / windowDays * 365.0
+			}
+		}
+	}
+
+	if data.Plan == nil {
+		avgAnnualMileage := 0.0
+		dailyRate := 0.0
+		if len(readings) > 0 {
+			milesUsed := float64(latestMiles) - readings[0].Miles
+			if milesUsed < 0 {
+				milesUsed = 0
+			}
+			daysTracked := today.Sub(readings[0].Date).Hours() / 24.0
+			if daysTracked >= 1 {
+				avgAnnualMileage = milesUsed / daysTracked * 365.0
+				dailyRate = milesUsed / daysTracked
+			}
+		}
+
+		paceTrendDelta := recentAnnualMileage - avgAnnualMileage
+		paceTrend := "steady"
+		if avgAnnualMileage > 0 {
+			threshold := avgAnnualMileage * 0.05
+			if paceTrendDelta > threshold {
+				paceTrend = "accelerating"
+			} else if paceTrendDelta < -threshold {
+				paceTrend = "easing"
+			}
+		}
+
+		return Status{
+			ID:                  id,
+			Vehicle:             data.Vehicle,
+			HasPlan:             false,
+			LatestReading:       latestMiles,
+			LatestDate:          latestDate,
+			DailyRate:           dailyRate,
+			AvgAnnualMileage:    avgAnnualMileage,
+			RecentAnnualMileage: recentAnnualMileage,
+			PaceTrendDelta:      paceTrendDelta,
+			PaceTrend:           paceTrend,
+		}
+	}
+
+	plan := data.Plan
+	if len(dates) == 0 {
+		latestMiles = plan.StartMiles
+	}
 	// Compute target vs actual
-	daysElapsed := today.Sub(data.Plan.Start).Hours() / 24.0
+	daysElapsed := today.Sub(plan.Start).Hours() / 24.0
 	if daysElapsed < 0 {
 		daysElapsed = 0
 	}
-	targetToday := float64(data.Plan.StartMiles) + float64(data.Plan.AnnualAllowance)*daysElapsed/365.0
-	milesUsed := float64(latestMiles - data.Plan.StartMiles)
-	delta := milesUsed - (targetToday - float64(data.Plan.StartMiles))
+	targetToday := float64(plan.StartMiles) + float64(plan.AnnualAllowance)*daysElapsed/365.0
+	milesUsed := float64(latestMiles - plan.StartMiles)
+	delta := milesUsed - (targetToday - float64(plan.StartMiles))
 
 	var pctUsed float64
-	targetMileage := targetToday - float64(data.Plan.StartMiles)
+	targetMileage := targetToday - float64(plan.StartMiles)
 	if targetMileage > 0 {
 		pctUsed = milesUsed / targetMileage * 100.0
 	}
 
 	// Year left calculation
-	yearsSince := today.Year() - data.Plan.Start.Year()
-	segmentStart := data.Plan.Start.AddDate(yearsSince, 0, 0)
+	yearsSince := today.Year() - plan.Start.Year()
+	segmentStart := plan.Start.AddDate(yearsSince, 0, 0)
 	if segmentStart.After(today) {
 		segmentStart = segmentStart.AddDate(-1, 0, 0)
 	}
 	segmentEnd := segmentStart.AddDate(1, 0, 0)
-	if segmentEnd.After(data.Plan.End) {
-		segmentEnd = data.Plan.End
+	if segmentEnd.After(plan.End) {
+		segmentEnd = plan.End
 	}
 
 	daysLeftYear := segmentEnd.Sub(today).Hours() / 24.0
 	if daysLeftYear < 0 {
 		daysLeftYear = 0
 	}
-	milesLeftYear := float64(data.Plan.AnnualAllowance) * daysLeftYear / 365.0
+	milesLeftYear := float64(plan.AnnualAllowance) * daysLeftYear / 365.0
 
 	// Daily rate within the current allowance year. Interpolate the odometer
 	// exactly at the segment boundary so miles driven *before* this year started
 	// aren't counted against it — both numerator and denominator then cover the
 	// same window (segmentStart → today).
-	readings := SortedReadings(data)
 	segmentDurationDays := segmentEnd.Sub(segmentStart).Hours() / 24.0
 	daysSoFar := today.Sub(segmentStart).Hours() / 24.0
 	if daysSoFar < 1 {
@@ -254,24 +325,8 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 		avgAnnualMileage = milesUsed / daysElapsed * 365.0
 	}
 
-	// Recent annual mileage: pace over the trailing 90 days, annualised. If
-	// there's less than 90 days of history, measure from the first reading.
-	recentAnnualMileage := 0.0
-	if len(readings) > 0 {
-		windowStart := today.AddDate(0, 0, -90)
-		if windowStart.Before(readings[0].Date) {
-			windowStart = readings[0].Date
-		}
-		windowDays := today.Sub(windowStart).Hours() / 24.0
-		if windowDays >= 1 {
-			if baseMiles, ok := OdometerAt(readings, windowStart); ok {
-				recentAnnualMileage = (float64(latestMiles) - baseMiles) / windowDays * 365.0
-			}
-		}
-	}
-
 	projectedUsage := dailyRate * segmentDurationDays
-	allowanceSegment := float64(data.Plan.AnnualAllowance) * segmentDurationDays / 365.0
+	allowanceSegment := float64(plan.AnnualAllowance) * segmentDurationDays / 365.0
 	projectedEnd := allowanceSegment - projectedUsage
 	projectedOver := projectedEnd < 0
 	if projectedOver {
@@ -279,13 +334,13 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 	}
 
 	// Term left
-	termDays := data.Plan.End.Sub(today).Hours() / 24.0
+	termDays := plan.End.Sub(today).Hours() / 24.0
 	if termDays < 0 {
 		termDays = 0
 	}
 	yearsLeft := int(termDays / 365.0)
 	daysLeft := int(math.Mod(termDays, 365.0))
-	milesLeftTerm := float64(data.Plan.AnnualAllowance) * termDays / 365.0
+	milesLeftTerm := float64(plan.AnnualAllowance) * termDays / 365.0
 
 	// Renewal countdown + final-mileage estimate (#3). daysToEnd is the whole
 	// countdown to plan end; the final-mileage estimate continues from the
@@ -296,8 +351,8 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 	// Drivable-rate budget (#4): how many miles/day you can still drive for the
 	// rest of the plan and finish within the total term allowance. Capacity, not
 	// pace: (total term allowance − miles already used) ÷ days remaining.
-	totalTermDays := data.Plan.End.Sub(data.Plan.Start).Hours() / 24.0
-	totalTermAllowanceMiles := float64(data.Plan.AnnualAllowance) * totalTermDays / 365.0
+	totalTermDays := plan.End.Sub(plan.Start).Hours() / 24.0
+	totalTermAllowanceMiles := float64(plan.AnnualAllowance) * totalTermDays / 365.0
 	drivableDailyRate := 0.0
 	if termDays >= 1 {
 		drivableDailyRate = (totalTermAllowanceMiles - milesUsed) / termDays
@@ -308,14 +363,14 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 
 	// Overage cost estimate (#5): how far the projected final mileage overshoots
 	// the total term allowance, and the £ penalty at the plan's excess rate.
-	projectedMilesDriven := estimatedFinalMileage - float64(data.Plan.StartMiles)
+	projectedMilesDriven := estimatedFinalMileage - float64(plan.StartMiles)
 	projectedExcessMiles := projectedMilesDriven - totalTermAllowanceMiles
 	if projectedExcessMiles < 0 {
 		projectedExcessMiles = 0
 	}
 	projectedOverageCost := 0.0
-	if data.Plan.ExcessRate > 0 {
-		projectedOverageCost = projectedExcessMiles * float64(data.Plan.ExcessRate) / 100.0
+	if plan.ExcessRate > 0 {
+		projectedOverageCost = projectedExcessMiles * float64(plan.ExcessRate) / 100.0
 	}
 
 	// Trend signal (#7): recent 90-day annual pace vs the lifetime average.
@@ -333,6 +388,7 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 	return Status{
 		ID:                  id,
 		Vehicle:             data.Vehicle,
+		HasPlan:             true,
 		LatestReading:       latestMiles,
 		LatestDate:          latestDate,
 		TargetToday:         targetToday,
@@ -348,15 +404,15 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 		RecentAnnualMileage: recentAnnualMileage,
 		ProjectedEnd:        projectedEnd,
 		ProjectedOver:       projectedOver,
-		PlanStart:           data.Plan.Start,
-		PlanEnd:             data.Plan.End,
-		AnnualAllowance:     data.Plan.AnnualAllowance,
-		StartMiles:          data.Plan.StartMiles,
+		PlanStart:           plan.Start,
+		PlanEnd:             plan.End,
+		AnnualAllowance:     plan.AnnualAllowance,
+		StartMiles:          plan.StartMiles,
 
 		DaysToEnd:             daysToEnd,
 		EstimatedFinalMileage: estimatedFinalMileage,
 		DrivableDailyRate:     drivableDailyRate,
-		ExcessRate:            data.Plan.ExcessRate,
+		ExcessRate:            plan.ExcessRate,
 		ProjectedExcessMiles:  projectedExcessMiles,
 		ProjectedOverageCost:  projectedOverageCost,
 		PaceTrendDelta:        paceTrendDelta,

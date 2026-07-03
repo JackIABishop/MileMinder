@@ -40,6 +40,28 @@ var statusCmd = &cobra.Command{
 		// Canonical status math lives in internal/calc (single source of truth,
 		// shared with the web API).
 		s := calc.ComputeStatus(carID, data)
+		if !s.HasPlan {
+			totalDriven := 0
+			firstDate := s.LatestDate
+			readings := calc.SortedReadings(data)
+			if len(readings) > 0 {
+				firstDate = readings[0].Date.Format("2006-01-02")
+				totalDriven = int(math.Round(float64(s.LatestReading) - readings[0].Miles))
+				if totalDriven < 0 {
+					totalDriven = 0
+				}
+			}
+
+			fmt.Printf("📅 %s  | 🚗 %s\n", time.Now().Format("02 Jan 2006"), carID)
+			fmt.Println(strings.Repeat("─", 50))
+			fmt.Printf("Actual Odo:     %d mi\n", s.LatestReading)
+			fmt.Printf("Tracked since:  %s\n", firstDate)
+			fmt.Printf("Total driven:   %d mi\n", totalDriven)
+			fmt.Printf("Daily rate:     %.1f mi/day\n", s.DailyRate)
+			fmt.Printf("Avg annual:     %.0f mi/yr\n", s.AvgAnnualMileage)
+			fmt.Printf("Recent annual:  %.0f mi/yr (%s)\n", s.RecentAnnualMileage, s.PaceTrend)
+			return nil
+		}
 
 		termLeftStr := fmt.Sprintf("%dy %dd", s.YearsLeftTerm, s.DaysLeftTerm)
 

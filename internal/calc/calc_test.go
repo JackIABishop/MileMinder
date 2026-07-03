@@ -80,7 +80,7 @@ func TestOdometerAt_SameDateZeroSpan(t *testing.T) {
 func vehicle(start, end string, allowance, startMiles int, rdgs map[string]int) *model.VehicleData {
 	return &model.VehicleData{
 		Vehicle: "Test Car",
-		Plan: model.Plan{
+		Plan: &model.Plan{
 			Start:           date(start),
 			End:             date(end),
 			AnnualAllowance: allowance,
@@ -191,6 +191,9 @@ func TestComputeStatus_NewPlan(t *testing.T) {
 	if s.LatestReading != 12000 {
 		t.Errorf("LatestReading = %d, want 12000", s.LatestReading)
 	}
+	if !s.HasPlan {
+		t.Error("HasPlan = false, want true")
+	}
 	if s.DailyRate != 0 {
 		t.Errorf("DailyRate = %v, want 0 for a brand-new plan", s.DailyRate)
 	}
@@ -200,6 +203,65 @@ func TestComputeStatus_NewPlan(t *testing.T) {
 	} {
 		if math.IsNaN(f) || math.IsInf(f, 0) {
 			t.Errorf("non-finite value in new-plan status: %v", f)
+		}
+	}
+}
+
+func TestComputeStatus_PlainVehicle(t *testing.T) {
+	now := date("2025-04-11")
+	v := &model.VehicleData{
+		Vehicle: "Owned Car",
+		Readings: map[string]int{
+			"2025-01-01": 10000,
+			"2025-04-11": 12500,
+		},
+	}
+	s := computeStatus("owned", v, now)
+
+	if s.HasPlan {
+		t.Error("HasPlan = true, want false")
+	}
+	if s.LatestReading != 12500 || s.LatestDate != "2025-04-11" {
+		t.Errorf("latest = %d/%s, want 12500/2025-04-11", s.LatestReading, s.LatestDate)
+	}
+	wantDaily := 2500.0 / 100.0
+	if !almostEqual(s.DailyRate, wantDaily) {
+		t.Errorf("DailyRate = %v, want %v", s.DailyRate, wantDaily)
+	}
+	wantAnnual := wantDaily * 365.0
+	if !almostEqual(s.AvgAnnualMileage, wantAnnual) {
+		t.Errorf("AvgAnnualMileage = %v, want %v", s.AvgAnnualMileage, wantAnnual)
+	}
+	for _, f := range []float64{
+		s.TargetToday, s.Delta, s.PercentUsed, s.MilesLeftYear, s.MilesLeftTerm,
+		s.ProjectedEnd, s.EstimatedFinalMileage, s.DrivableDailyRate, s.ProjectedExcessMiles, s.ProjectedOverageCost,
+	} {
+		if f != 0 {
+			t.Errorf("plain allowance field not zero: %v", f)
+		}
+	}
+}
+
+func TestComputeStatus_PlainEdgeCases(t *testing.T) {
+	now := date("2025-04-11")
+	cases := []struct {
+		name string
+		rdgs map[string]int
+	}{
+		{"zero readings", nil},
+		{"single reading", map[string]int{"2025-04-11": 12500}},
+		{"same-day tracking", map[string]int{"2025-04-11": 12500}},
+	}
+	for _, tc := range cases {
+		v := &model.VehicleData{Vehicle: "Owned Car", Readings: tc.rdgs}
+		s := computeStatus(tc.name, v, now)
+		if s.HasPlan {
+			t.Errorf("%s: HasPlan = true, want false", tc.name)
+		}
+		for _, f := range []float64{s.DailyRate, s.AvgAnnualMileage, s.RecentAnnualMileage, s.PaceTrendDelta} {
+			if f != 0 || math.IsNaN(f) || math.IsInf(f, 0) {
+				t.Errorf("%s: want finite zero pace, got %v", tc.name, f)
+			}
 		}
 	}
 }
@@ -250,11 +312,15 @@ func TestComputeFleetInsights(t *testing.T) {
 		t.Fatalf("fixture broken: want worst.PercentUsed(%v) > bigMiles.PercentUsed(%v)", worst.PercentUsed, bigMiles.PercentUsed)
 	}
 
-	fleet := []Status{under, bigMiles, worst}
+	plain := computeStatus("plain", &model.VehicleData{
+		Vehicle:  "Owned Car",
+		Readings: map[string]int{"2025-01-01": 10000, "2025-04-11": 12000},
+	}, now)
+	fleet := []Status{under, bigMiles, worst, plain}
 	got := ComputeFleetInsights(fleet)
 
-	if got.TotalVehicles != 3 {
-		t.Errorf("TotalVehicles = %d, want 3", got.TotalVehicles)
+	if got.TotalVehicles != 4 || got.PolicyVehicles != 3 || got.PlainVehicles != 1 {
+		t.Errorf("vehicle counts = total %d policy %d plain %d, want 4/3/1", got.TotalVehicles, got.PolicyVehicles, got.PlainVehicles)
 	}
 	if got.CountOver != 2 || got.CountUnder != 1 {
 		t.Errorf("CountOver/CountUnder = %d/%d, want 2/1", got.CountOver, got.CountUnder)
@@ -263,7 +329,7 @@ func TestComputeFleetInsights(t *testing.T) {
 	if !almostEqual(got.NetDelta, wantNet) {
 		t.Errorf("NetDelta = %v, want %v", got.NetDelta, wantNet)
 	}
-	wantTotalAnnual := under.AvgAnnualMileage + bigMiles.AvgAnnualMileage + worst.AvgAnnualMileage
+	wantTotalAnnual := under.AvgAnnualMileage + bigMiles.AvgAnnualMileage + worst.AvgAnnualMileage + plain.AvgAnnualMileage
 	if !almostEqual(got.TotalAvgAnnualMileage, wantTotalAnnual) {
 		t.Errorf("TotalAvgAnnualMileage = %v, want %v", got.TotalAvgAnnualMileage, wantTotalAnnual)
 	}
@@ -309,6 +375,28 @@ func TestComputeFleetInsights_Empty(t *testing.T) {
 	}
 	if got.NetDelta != 0 || got.TotalAvgAnnualMileage != 0 || got.AvgPercentUsed != 0 {
 		t.Errorf("empty fleet should have zero sums, got %+v", got)
+	}
+}
+
+func TestComputeFleetInsights_AllPlain(t *testing.T) {
+	now := date("2025-04-11")
+	plain := computeStatus("plain", &model.VehicleData{
+		Vehicle:  "Owned Car",
+		Readings: map[string]int{"2025-01-01": 10000, "2025-04-11": 12000},
+	}, now)
+
+	got := ComputeFleetInsights([]Status{plain})
+	if got.TotalVehicles != 1 || got.PolicyVehicles != 0 || got.PlainVehicles != 1 {
+		t.Errorf("vehicle counts = total %d policy %d plain %d, want 1/0/1", got.TotalVehicles, got.PolicyVehicles, got.PlainVehicles)
+	}
+	if got.WorstOffenderID != "" {
+		t.Errorf("WorstOffenderID = %q, want empty for all-plain fleet", got.WorstOffenderID)
+	}
+	if got.CountOver != 0 || got.CountUnder != 0 || got.NetDelta != 0 || got.AvgPercentUsed != 0 {
+		t.Errorf("allowance aggregates should be zero for all-plain fleet, got %+v", got)
+	}
+	if !almostEqual(got.TotalAvgAnnualMileage, plain.AvgAnnualMileage) {
+		t.Errorf("TotalAvgAnnualMileage = %v, want %v", got.TotalAvgAnnualMileage, plain.AvgAnnualMileage)
 	}
 }
 

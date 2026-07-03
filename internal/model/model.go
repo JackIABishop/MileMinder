@@ -14,6 +14,10 @@ type Plan struct {
 
 type VehicleData struct {
 	Vehicle  string         `yaml:"vehicle" json:"vehicle"`
-	Plan     Plan           `yaml:"plan" json:"plan"`
+	Plan     *Plan          `yaml:"plan,omitempty" json:"plan,omitempty"`
 	Readings map[string]int `yaml:"readings" json:"readings"` // date string → miles
+}
+
+func (v *VehicleData) HasPlan() bool {
+	return v != nil && v.Plan != nil
 }

@@ -35,6 +35,11 @@ var fleetCmd = &cobra.Command{
 			// Canonical status math lives in internal/calc. Note delta is
 			// positive when over budget (matches the web dashboard).
 			s := calc.ComputeStatus(r.ID, r.Data)
+			if !s.HasPlan {
+				fmt.Printf("%-12s %-8d %10s %7s %s\n",
+					r.ID, s.LatestReading, "—", "—", fmt.Sprintf("≈%.0f mi/yr", s.AvgAnnualMileage))
+				continue
+			}
 			termLeft := fmt.Sprintf("%dy %dd", s.YearsLeftTerm, s.DaysLeftTerm)
 
 			fmt.Printf("%-12s %-8d %+10.0f %7.1f%% %s\n",

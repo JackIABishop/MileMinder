@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -32,13 +33,204 @@ func newTestServer(t *testing.T, seed map[string]*model.VehicleData) (*httptest.
 func sampleVehicle() *model.VehicleData {
 	return &model.VehicleData{
 		Vehicle: "Golf",
-		Plan: model.Plan{
+		Plan: &model.Plan{
 			Start:           time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 			End:             time.Date(2028, 1, 1, 0, 0, 0, 0, time.UTC),
 			AnnualAllowance: 10000,
 			StartMiles:      5000,
 		},
 		Readings: map[string]int{"2025-01-01": 5000},
+	}
+}
+
+func TestCreatePlainVehicle(t *testing.T) {
+	srv, st := newTestServer(t, nil)
+
+	resp, err := http.Post(srv.URL+"/api/v1/vehicles", "application/json", bytes.NewBufferString(`{
+		"id":"owned",
+		"vehicle":"Owned Car",
+		"start_date":"2025-01-01",
+		"start_miles":10000
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("want 201, got %d", resp.StatusCode)
+	}
+	data, err := st.GetVehicle(context.Background(), "owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.Plan != nil {
+		t.Fatalf("plain vehicle stored with plan: %+v", data.Plan)
+	}
+	if data.Readings["2025-01-01"] != 10000 {
+		t.Fatalf("initial reading not stored: %+v", data.Readings)
+	}
+
+	statusResp, err := http.Get(srv.URL + "/api/v1/vehicles/owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer statusResp.Body.Close()
+	var status api.VehicleStatus
+	if err := json.NewDecoder(statusResp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status.HasPlan {
+		t.Fatal("created plain vehicle status has_plan=true")
+	}
+}
+
+func TestCreateVehiclePartialPlanRejected(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+
+	resp, err := http.Post(srv.URL+"/api/v1/vehicles", "application/json", bytes.NewBufferString(`{
+		"id":"bad",
+		"vehicle":"Bad",
+		"start_date":"2025-01-01",
+		"annual_allowance":10000,
+		"start_miles":10000
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestCreateVehicleDecimalExcessRateRejectedCleanly(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+
+	resp, err := http.Post(srv.URL+"/api/v1/vehicles", "application/json", bytes.NewBufferString(`{
+		"id":"bad",
+		"vehicle":"Bad",
+		"start_date":"2025-01-01",
+		"end_date":"2026-01-01",
+		"annual_allowance":10000,
+		"start_miles":10000,
+		"excess_rate":0.1
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", resp.StatusCode)
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != "invalid_excess_rate" || body.Error.Message != "excess_rate must be a whole number of pence" {
+		t.Fatalf("unexpected error body: %+v", body)
+	}
+}
+
+func TestPatchExcessRateOnPlainRejected(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]*model.VehicleData{
+		"owned": {Vehicle: "Owned Car", Readings: map[string]int{"2025-01-01": 10000}},
+	})
+
+	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/api/v1/vehicles/owned", bytes.NewBufferString(`{"excess_rate":10}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestPatchPlainVehicleConversion(t *testing.T) {
+	srv, st := newTestServer(t, map[string]*model.VehicleData{
+		"owned": {Vehicle: "Owned Car", Readings: map[string]int{"2025-01-01": 10000, "2025-02-01": 10500}},
+	})
+
+	req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/api/v1/vehicles/owned", bytes.NewBufferString(`{
+		"start_date":"2025-01-01",
+		"end_date":"2026-01-01",
+		"annual_allowance":10000,
+		"start_miles":10000,
+		"excess_rate":10
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	data, err := st.GetVehicle(context.Background(), "owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data.Plan == nil || data.Plan.AnnualAllowance != 10000 || data.Plan.ExcessRate != 10 {
+		t.Fatalf("conversion plan not stored: %+v", data.Plan)
+	}
+
+	statusResp, err := http.Get(srv.URL + "/api/v1/vehicles/owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer statusResp.Body.Close()
+	var status api.VehicleStatus
+	if err := json.NewDecoder(statusResp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.HasPlan || status.AnnualAllowance != 10000 {
+		t.Fatalf("converted status missing plan fields: %+v", status)
+	}
+}
+
+func TestPlainVehicleGraphHasNoIdeals(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]*model.VehicleData{
+		"owned": {Vehicle: "Owned Car", Readings: map[string]int{"2025-01-01": 10000, "2025-02-01": 10500}},
+	})
+
+	resp, err := http.Get(srv.URL + "/api/v1/vehicles/owned/graph")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Ideals json.RawMessage `json:"ideals"`
+	}
+	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if string(raw.Ideals) != "[]" {
+		t.Fatalf("plain graph raw ideals = %s, want []", raw.Ideals)
+	}
+	var graph api.GraphData
+	if err := json.Unmarshal(bodyBytes, &graph); err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Ideals) != 0 {
+		t.Fatalf("plain graph ideals = %+v, want empty", graph.Ideals)
+	}
+	if len(graph.Actuals) != 2 || graph.Actuals[0] != 0 || graph.Actuals[1] != 500 {
+		t.Fatalf("plain graph actuals = %+v, want [0 500]", graph.Actuals)
 	}
 }
 

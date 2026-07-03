@@ -27,6 +27,10 @@ func NewMemory() *Memory {
 // returned pointer (the filesystem store hands back fresh parses each time).
 func clone(data *model.VehicleData) *model.VehicleData {
 	cp := *data
+	if data.Plan != nil {
+		p := *data.Plan
+		cp.Plan = &p
+	}
 	cp.Readings = make(map[string]int, len(data.Readings))
 	for k, v := range data.Readings {
 		cp.Readings[k] = v

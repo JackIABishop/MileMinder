@@ -5,6 +5,7 @@ package storagetest
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 func sampleVehicle(name string) *model.VehicleData {
 	return &model.VehicleData{
 		Vehicle: name,
-		Plan: model.Plan{
+		Plan: &model.Plan{
 			Start:           time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 			End:             time.Date(2028, 1, 1, 0, 0, 0, 0, time.UTC),
 			AnnualAllowance: 10000,
@@ -49,11 +50,33 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) storage.Store) {
 		if err != nil {
 			t.Fatalf("GetVehicle: %v", err)
 		}
-		if got.Vehicle != want.Vehicle || got.Plan != want.Plan {
+		if got.Vehicle != want.Vehicle || !reflect.DeepEqual(got.Plan, want.Plan) {
 			t.Fatalf("round trip mismatch: got %+v want %+v", got, want)
 		}
 		if got.Readings["2025-01-01"] != 5000 {
 			t.Fatalf("reading lost in round trip: %+v", got.Readings)
+		}
+	})
+
+	t.Run("PlainVehicleRoundTrip", func(t *testing.T) {
+		st := newStore(t)
+		want := &model.VehicleData{
+			Vehicle:  "Owned Car",
+			Plan:     nil,
+			Readings: map[string]int{"2025-01-01": 5000, "2025-06-01": 6100},
+		}
+		if err := st.SaveVehicle(ctx, "owned", want); err != nil {
+			t.Fatalf("SaveVehicle: %v", err)
+		}
+		got, err := st.GetVehicle(ctx, "owned")
+		if err != nil {
+			t.Fatalf("GetVehicle: %v", err)
+		}
+		if got.Plan != nil {
+			t.Fatalf("plain vehicle got non-nil plan: %+v", got.Plan)
+		}
+		if got.Vehicle != want.Vehicle || !reflect.DeepEqual(got.Readings, want.Readings) {
+			t.Fatalf("plain round trip mismatch: got %+v want %+v", got, want)
 		}
 	})
 
@@ -85,12 +108,16 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) storage.Store) {
 			t.Fatalf("GetVehicle: %v", err)
 		}
 		got.Readings["2025-06-01"] = 9999 // must not leak back into the store
+		got.Plan.ExcessRate = 99          // must not alias the stored plan either
 		reread, err := st.GetVehicle(ctx, "golf")
 		if err != nil {
 			t.Fatalf("GetVehicle: %v", err)
 		}
 		if _, ok := reread.Readings["2025-06-01"]; ok {
 			t.Fatal("mutating a returned vehicle leaked into the store")
+		}
+		if reread.Plan.ExcessRate == 99 {
+			t.Fatal("mutating a returned plan leaked into the store")
 		}
 	})
 

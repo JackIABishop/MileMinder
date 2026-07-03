@@ -44,3 +44,4 @@ immutability is exactly what keeps the log honest instead of drifting.
 - [ADR-0002](0002-single-source-of-truth-calculation-engine.md) — Single source of truth for the calculation engine
 - [ADR-0003](0003-storage-abstraction-repository-pattern.md) — Storage abstraction via the repository pattern
 - [ADR-0004](0004-authentication-and-session-model.md) — Authentication & session model
+- [ADR-0005](0005-optional-allowance-plan.md) — Optional allowance plan

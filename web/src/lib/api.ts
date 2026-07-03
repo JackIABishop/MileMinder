@@ -15,6 +15,7 @@ export interface VehicleListItem {
 export interface VehicleStatus {
 	id: string;
 	vehicle: string;
+	has_plan: boolean;
 	latest_reading: number;
 	latest_date: string;
 	target_today: number;
@@ -54,6 +55,8 @@ export interface VehicleStatus {
 // "Worst offender" and comparative pace are ranked by percent_used.
 export interface FleetInsights {
 	total_vehicles: number;
+	policy_vehicles: number;
+	plain_vehicles: number;
 	count_over: number;
 	count_under: number;
 	net_delta: number; // miles; +ve = household collectively over the allowance line
@@ -82,15 +85,19 @@ export interface GraphData {
 export interface CreateVehicleRequest {
 	id: string;
 	vehicle: string;
-	start_date: string;
-	end_date: string;
-	annual_allowance: number;
+	start_date?: string;
+	end_date?: string;
+	annual_allowance?: number;
 	start_miles: number;
 	excess_rate?: number;
 }
 
 export interface UpdatePlanRequest {
 	excess_rate?: number;
+	start_date?: string;
+	end_date?: string;
+	annual_allowance?: number;
+	start_miles?: number;
 }
 
 export interface AddReadingRequest {
@@ -118,6 +125,16 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
 
 	if (!response.ok) {
 		const text = await response.text();
+		let parsed: any = null;
+		try {
+			parsed = JSON.parse(text);
+		} catch {
+			parsed = null;
+		}
+		if (parsed?.error?.message) {
+			const code = parsed.error.code ? `${parsed.error.code}: ` : '';
+			throw new Error(`${code}${parsed.error.message}`);
+		}
 		throw new Error(text || `HTTP ${response.status}`);
 	}
 
