@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { listVehicles, createVehicle, getVehicle, updatePlan, formatDate, type VehicleListItem } from '$lib/api';
+	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, type VehicleListItem, type VehicleStatus } from '$lib/api';
 	import { mode, user, logout } from '$lib/auth';
 
 	async function handleLogout() {
@@ -19,11 +19,22 @@
 	// Per-vehicle excess rate (pence/excess mile), loaded from each vehicle's status.
 	let excessRates: Record<string, number> = {};
 	let savingRate: Record<string, boolean> = {};
+	let vehicleStatuses: Record<string, VehicleStatus> = {};
+	let showPlanForm: Record<string, boolean> = {};
+	let savingPlan: Record<string, boolean> = {};
+	let planForms: Record<string, {
+		start_date: string;
+		end_date: string;
+		annual_allowance: number;
+		start_miles: number;
+		excess_rate: number;
+	}> = {};
 
 	// New vehicle form
 	let newVehicle = {
 		id: '',
 		vehicle: '',
+		has_plan: true,
 		start_date: '',
 		end_date: '',
 		annual_allowance: 10000,
@@ -41,10 +52,12 @@
 			vehicles = await listVehicles();
 			// Pull each vehicle's current excess rate so the inline editor prefills.
 			const rates: Record<string, number> = {};
+			const statuses: Record<string, VehicleStatus> = {};
 			await Promise.all(
 				vehicles.map(async (v) => {
 					try {
 						const s = await getVehicle(v.id);
+						statuses[v.id] = s;
 						rates[v.id] = s.excess_rate ?? 0;
 					} catch {
 						rates[v.id] = 0;
@@ -52,6 +65,7 @@
 				})
 			);
 			excessRates = rates;
+			vehicleStatuses = statuses;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load vehicles';
 		} finally {
@@ -72,8 +86,49 @@
 		}
 	}
 
+	async function togglePlanForm(id: string) {
+		showPlanForm = { ...showPlanForm, [id]: !showPlanForm[id] };
+		if (!showPlanForm[id] || planForms[id]) return;
+		try {
+			const readings = await getReadings(id);
+			const first = readings[0];
+			planForms = {
+				...planForms,
+				[id]: {
+					start_date: first?.date ?? new Date().toISOString().slice(0, 10),
+					end_date: '',
+					annual_allowance: 10000,
+					start_miles: first?.miles ?? 0,
+					excess_rate: 0
+				}
+			};
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to load readings';
+		}
+	}
+
+	async function handleAddPlan(id: string) {
+		const form = planForms[id];
+		if (!form?.start_date || !form.end_date || !form.annual_allowance) {
+			error = 'Please fill in all allowance plan fields';
+			return;
+		}
+		savingPlan = { ...savingPlan, [id]: true };
+		error = '';
+		try {
+			await updatePlan(id, form);
+			success = `Allowance plan added for ${id}.`;
+			showPlanForm = { ...showPlanForm, [id]: false };
+			await loadVehicles();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to add allowance plan';
+		} finally {
+			savingPlan = { ...savingPlan, [id]: false };
+		}
+	}
+
 	async function handleCreateVehicle() {
-		if (!newVehicle.id || !newVehicle.start_date || !newVehicle.end_date) {
+		if (!newVehicle.id || (newVehicle.has_plan && (!newVehicle.start_date || !newVehicle.end_date))) {
 			error = 'Please fill in all required fields';
 			return;
 		}
@@ -82,21 +137,25 @@
 		error = '';
 
 		try {
-			await createVehicle({
+			const payload = {
 				id: newVehicle.id.toLowerCase().replace(/\s+/g, '_'),
 				vehicle: newVehicle.vehicle || newVehicle.id,
-				start_date: newVehicle.start_date,
+				start_miles: newVehicle.start_miles,
+				start_date: newVehicle.start_date || undefined
+			};
+			await createVehicle(newVehicle.has_plan ? {
+				...payload,
 				end_date: newVehicle.end_date,
 				annual_allowance: newVehicle.annual_allowance,
-				start_miles: newVehicle.start_miles,
 				excess_rate: newVehicle.excess_rate
-			});
+			} : payload);
 			
 			success = `Vehicle "${newVehicle.vehicle || newVehicle.id}" created successfully!`;
 			showAddForm = false;
 			newVehicle = {
 				id: '',
 				vehicle: '',
+				has_plan: true,
 				start_date: '',
 				end_date: '',
 				annual_allowance: 10000,
@@ -117,6 +176,7 @@
 		newVehicle = {
 			id: '',
 			vehicle: '',
+			has_plan: true,
 			start_date: '',
 			end_date: '',
 			annual_allowance: 10000,
@@ -204,27 +264,70 @@
 								{/if}
 							</div>
 
-							<!-- Excess-rate editor (#5): settable on existing vehicles -->
-							<div class="mt-4 pt-4 border-t border-carbon-800 flex items-end gap-3">
-								<div class="flex-1">
-									<label for="rate-{vehicle.id}" class="label">Excess Rate (pence per mile over)</label>
-									<input
-										type="number"
-										id="rate-{vehicle.id}"
-										bind:value={excessRates[vehicle.id]}
-										class="input font-mono"
-										min="0"
-										placeholder="0"
-									/>
+							{#if vehicleStatuses[vehicle.id]?.has_plan}
+								<!-- Excess-rate editor (#5): settable on existing policy vehicles -->
+								<div class="mt-4 pt-4 border-t border-carbon-800 flex items-end gap-3">
+									<div class="flex-1">
+										<label for="rate-{vehicle.id}" class="label">Excess Rate (pence per mile over)</label>
+										<input
+											type="number"
+											id="rate-{vehicle.id}"
+											bind:value={excessRates[vehicle.id]}
+											class="input font-mono"
+											min="0"
+											step="1"
+											placeholder="0"
+										/>
+									</div>
+									<button
+										class="btn-secondary"
+										on:click={() => handleSaveRate(vehicle.id)}
+										disabled={savingRate[vehicle.id]}
+									>
+										{savingRate[vehicle.id] ? 'Saving...' : 'Save'}
+									</button>
 								</div>
-								<button
-									class="btn-secondary"
-									on:click={() => handleSaveRate(vehicle.id)}
-									disabled={savingRate[vehicle.id]}
-								>
-									{savingRate[vehicle.id] ? 'Saving...' : 'Save'}
-								</button>
-							</div>
+							{:else}
+								<div class="mt-4 pt-4 border-t border-carbon-800">
+									<div class="flex items-center justify-between gap-3">
+										<p class="text-sm text-carbon-400">No allowance policy</p>
+										<button class="btn-secondary text-sm" on:click={() => togglePlanForm(vehicle.id)}>
+											{showPlanForm[vehicle.id] ? 'Cancel' : 'Add allowance plan'}
+										</button>
+									</div>
+									{#if showPlanForm[vehicle.id] && planForms[vehicle.id]}
+										<form on:submit|preventDefault={() => handleAddPlan(vehicle.id)} class="mt-4 space-y-4">
+											<div class="grid grid-cols-2 gap-4">
+												<div>
+													<label for="planStart-{vehicle.id}" class="label">Plan Start Date *</label>
+													<input id="planStart-{vehicle.id}" type="date" bind:value={planForms[vehicle.id].start_date} class="input" required />
+												</div>
+												<div>
+													<label for="planEnd-{vehicle.id}" class="label">Plan End Date *</label>
+													<input id="planEnd-{vehicle.id}" type="date" bind:value={planForms[vehicle.id].end_date} class="input" required />
+												</div>
+											</div>
+											<div class="grid grid-cols-2 gap-4">
+												<div>
+													<label for="planAllowance-{vehicle.id}" class="label">Annual Allowance (miles) *</label>
+													<input id="planAllowance-{vehicle.id}" type="number" bind:value={planForms[vehicle.id].annual_allowance} class="input font-mono" min="1" required />
+												</div>
+												<div>
+													<label for="planMiles-{vehicle.id}" class="label">Starting Odometer *</label>
+													<input id="planMiles-{vehicle.id}" type="number" bind:value={planForms[vehicle.id].start_miles} class="input font-mono" min="0" required />
+												</div>
+											</div>
+											<div>
+												<label for="planRate-{vehicle.id}" class="label">Excess Rate (pence per mile over)</label>
+												<input id="planRate-{vehicle.id}" type="number" bind:value={planForms[vehicle.id].excess_rate} class="input font-mono" min="0" step="1" />
+											</div>
+											<button type="submit" class="btn-primary" disabled={savingPlan[vehicle.id]}>
+												{savingPlan[vehicle.id] ? 'Saving...' : 'Save allowance plan'}
+											</button>
+										</form>
+									{/if}
+								</div>
+							{/if}
 						</div>
 					{/each}
 				</div>
@@ -277,43 +380,52 @@
 							</div>
 						</div>
 
+						<label class="flex items-center gap-3 p-4 bg-carbon-900/40 border border-carbon-800 rounded-lg">
+							<input type="checkbox" bind:checked={newVehicle.has_plan} class="w-4 h-4 accent-accent-primary" />
+							<span class="text-sm text-carbon-200">Has a mileage allowance (PCP/lease/insurance)</span>
+						</label>
+
 						<div class="grid grid-cols-2 gap-4">
 							<div>
-								<label for="startDate" class="label">Plan Start Date *</label>
+								<label for="startDate" class="label">{newVehicle.has_plan ? 'Plan Start Date *' : 'Reading Date'}</label>
 								<input
 									type="date"
 									id="startDate"
 									bind:value={newVehicle.start_date}
 									class="input"
-									required
+									required={newVehicle.has_plan}
 								/>
 							</div>
-							<div>
-								<label for="endDate" class="label">Plan End Date *</label>
-								<input
-									type="date"
-									id="endDate"
-									bind:value={newVehicle.end_date}
-									class="input"
-									required
-								/>
-							</div>
+							{#if newVehicle.has_plan}
+								<div>
+									<label for="endDate" class="label">Plan End Date *</label>
+									<input
+										type="date"
+										id="endDate"
+										bind:value={newVehicle.end_date}
+										class="input"
+										required
+									/>
+								</div>
+							{/if}
 						</div>
 
 						<div class="grid grid-cols-2 gap-4">
+							{#if newVehicle.has_plan}
+								<div>
+									<label for="annualAllowance" class="label">Annual Allowance (miles) *</label>
+									<input
+										type="number"
+										id="annualAllowance"
+										bind:value={newVehicle.annual_allowance}
+										class="input font-mono"
+										min="1"
+										required
+									/>
+								</div>
+							{/if}
 							<div>
-								<label for="annualAllowance" class="label">Annual Allowance (miles) *</label>
-								<input
-									type="number"
-									id="annualAllowance"
-									bind:value={newVehicle.annual_allowance}
-									class="input font-mono"
-									min="1"
-									required
-								/>
-							</div>
-							<div>
-								<label for="startMiles" class="label">Starting Odometer *</label>
+								<label for="startMiles" class="label">{newVehicle.has_plan ? 'Starting Odometer *' : 'Current Odometer *'}</label>
 								<input
 									type="number"
 									id="startMiles"
@@ -325,18 +437,21 @@
 							</div>
 						</div>
 
-						<div>
-							<label for="excessRate" class="label">Excess Rate (pence per mile over)</label>
-							<input
-								type="number"
-								id="excessRate"
-								bind:value={newVehicle.excess_rate}
-								class="input font-mono"
-								min="0"
-								placeholder="e.g., 10"
-							/>
-							<p class="text-xs text-carbon-500 mt-1">Optional — used to estimate the overage penalty if you exceed the allowance</p>
-						</div>
+						{#if newVehicle.has_plan}
+							<div>
+								<label for="excessRate" class="label">Excess Rate (pence per mile over)</label>
+								<input
+									type="number"
+									id="excessRate"
+									bind:value={newVehicle.excess_rate}
+									class="input font-mono"
+									min="0"
+									step="1"
+									placeholder="e.g., 10"
+								/>
+								<p class="text-xs text-carbon-500 mt-1">Optional — used to estimate the overage penalty if you exceed the allowance</p>
+							</div>
+						{/if}
 
 						<div class="flex gap-3 pt-4">
 							<button type="submit" class="btn-primary flex-1" disabled={submitting}>

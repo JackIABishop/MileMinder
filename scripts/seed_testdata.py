@@ -84,6 +84,24 @@ def write_yaml(file_id, v):
     print(f"wrote {path} ({len(v['readings'])} readings)")
 
 
+def write_plain_yaml(file_id, vehicle, start, start_miles, daily_rate, count=10):
+    path = os.path.join(HOME, file_id + ".yml")
+    readings = {}
+    odo = start_miles
+    for i in range(count):
+        d = start + timedelta(days=i * 21)
+        if i > 0:
+            odo += int(round(daily_rate * 21 * random.uniform(0.75, 1.25)))
+        readings[d.isoformat()] = odo
+
+    lines = [f"vehicle: {vehicle}", "readings:"]
+    for k, m in sorted(readings.items()):
+        lines.append(f'    "{k}": {m}')
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"wrote {path} ({len(readings)} readings, no plan)")
+
+
 scenarios = {
     # Crosses from under -> over the ideal line; spans 2 year-boundaries.
     "testcar": gen(
@@ -119,3 +137,11 @@ scenarios = {
 
 for file_id, v in scenarios.items():
     write_yaml(file_id, v)
+
+write_plain_yaml(
+    "test-plain",
+    "Owned Runabout (tracking only)",
+    date(2025, 12, 1),
+    42000,
+    24,
+)

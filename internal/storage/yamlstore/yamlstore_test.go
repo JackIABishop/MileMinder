@@ -81,6 +81,34 @@ func TestSavedBytesMatchLegacyEncoder(t *testing.T) {
 	}
 }
 
+func TestPlainVehicleOmitsPlan(t *testing.T) {
+	dir := t.TempDir()
+	st := yamlstore.New(dir)
+	data := &model.VehicleData{
+		Vehicle:  "Owned Car",
+		Readings: map[string]int{"2025-01-01": 10000},
+	}
+
+	if err := st.SaveVehicle(context.Background(), "owned", data); err != nil {
+		t.Fatalf("SaveVehicle: %v", err)
+	}
+	gotBytes, err := os.ReadFile(filepath.Join(dir, "owned.yml"))
+	if err != nil {
+		t.Fatalf("read written file: %v", err)
+	}
+	if bytes.Contains(gotBytes, []byte("plan:")) {
+		t.Fatalf("plain vehicle file contains plan key:\n%s", gotBytes)
+	}
+
+	got, err := st.GetVehicle(context.Background(), "owned")
+	if err != nil {
+		t.Fatalf("GetVehicle: %v", err)
+	}
+	if got.Plan != nil {
+		t.Fatalf("plain vehicle loaded with non-nil plan: %+v", got.Plan)
+	}
+}
+
 // TestAtomicWriteFilePerms verifies vehicle files land at 0644, matching the
 // perms the previous os.Create path produced (rather than os.CreateTemp's 0600).
 func TestAtomicWriteFilePerms(t *testing.T) {
@@ -101,7 +129,7 @@ func TestAtomicWriteFilePerms(t *testing.T) {
 func sample() *model.VehicleData {
 	return &model.VehicleData{
 		Vehicle: "Golf",
-		Plan: model.Plan{
+		Plan: &model.Plan{
 			Start:           time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 			End:             time.Date(2028, 1, 1, 0, 0, 0, 0, time.UTC),
 			AnnualAllowance: 10000,

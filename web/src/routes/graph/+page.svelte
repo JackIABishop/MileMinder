@@ -72,13 +72,14 @@
 		const ctx = chartCanvas.getContext('2d');
 		if (!ctx) return;
 
-		const start = new Date(status.plan_start);
-		const end = new Date(status.plan_end);
+		const firstReadingDate = graphData.dates[0] ? new Date(graphData.dates[0]) : new Date();
+		const start = status.has_plan ? new Date(status.plan_start) : firstReadingDate;
+		const end = status.has_plan ? new Date(status.plan_end) : new Date();
 		const today = new Date();
 		const annual = status.annual_allowance;
 
 		// Right edge of the time axis: today, or the plan end when projecting.
-		const axisMax = showProjection ? end : today;
+		const axisMax = status.has_plan && showProjection ? end : today;
 
 		// Allowance-year intervals (start → start+1yr …), capped at the plan end.
 		const yearIntervals: { start: number; end: number; index: number }[] = [];
@@ -103,7 +104,7 @@
 		const yearBandsPlugin = {
 			id: 'yearBands',
 			beforeDatasetsDraw(c: Chart) {
-				if (!showYears) return;
+				if (!showYears || !status?.has_plan) return;
 				const { ctx, chartArea, scales } = c;
 				const xs = scales.x;
 				ctx.save();
@@ -117,7 +118,7 @@
 				ctx.restore();
 			},
 			afterDatasetsDraw(c: Chart) {
-				if (!showYears) return;
+				if (!showYears || !status?.has_plan) return;
 				const { ctx, chartArea, scales } = c;
 				const xs = scales.x;
 				ctx.save();
@@ -156,12 +157,6 @@
 			y: graphData!.actuals[i]
 		}));
 
-		// Ideal allowance line: a straight line from (start, 0) to the axis edge,
-		// sampled weekly so it can be hovered at any date.
-		const idealPoints = sampleLine(start.getTime(), axisMax.getTime(), (ms) =>
-			idealAt(new Date(ms), start, annual)
-		);
-
 		const datasets: any[] = [
 			{
 				label: 'Actual Miles',
@@ -174,8 +169,15 @@
 				pointBorderColor: '#22c55e',
 				pointRadius: 4,
 				pointHoverRadius: 6
-			},
-			{
+			}
+		];
+		if (status.has_plan) {
+			// Ideal allowance line: a straight line from (start, 0) to the axis edge,
+			// sampled weekly so it can be hovered at any date.
+			const idealPoints = sampleLine(start.getTime(), axisMax.getTime(), (ms) =>
+				idealAt(new Date(ms), start, annual)
+			);
+			datasets.push({
 				label: 'Allowance Limit',
 				data: idealPoints,
 				borderColor: '#60a5fa',
@@ -183,12 +185,12 @@
 				borderDash: [5, 5],
 				pointRadius: 0,
 				pointHoverRadius: 4
-			}
-		];
+			});
+		}
 
 		// Projection: extend the last reading to plan end at the current daily
 		// rate, sampled weekly so each future date is hoverable.
-		if (showProjection && graphData.dates.length > 0) {
+		if (status.has_plan && showProjection && graphData.dates.length > 0) {
 			const lastDate = new Date(graphData.dates[graphData.dates.length - 1]);
 			const lastY = graphData.actuals[graphData.actuals.length - 1];
 			const rate = status.daily_rate;
@@ -258,6 +260,7 @@
 							// For an actual/projected point, also show the allowance at
 							// that date and how far above/below the line it sits.
 							afterBody: function(items) {
+								if (!status?.has_plan) return [];
 								if (!items.length) return [];
 								const item = items[0];
 								if (item.dataset.label === 'Allowance Limit') return [];
@@ -337,7 +340,7 @@
 		</div>
 	{:else if status && graphData}
 		<!-- Legend Info -->
-		<div class="grid grid-cols-2 gap-4 mb-6">
+		<div class="grid {status.has_plan ? 'grid-cols-2' : 'grid-cols-1'} gap-4 mb-6">
 			<div class="card animate-slide-up">
 				<div class="flex items-center gap-3">
 					<div class="w-4 h-4 rounded-full bg-gauge-green"></div>
@@ -349,17 +352,19 @@
 					</div>
 				</div>
 			</div>
-			<div class="card animate-slide-up stagger-1">
-				<div class="flex items-center gap-3">
-					<div class="w-4 h-4 rounded-full bg-accent-primary"></div>
-					<div>
-						<p class="text-sm text-carbon-400">Allowance Limit</p>
-						<p class="text-lg font-mono font-semibold text-carbon-100">
-							{formatNumber(graphData.ideals[graphData.ideals.length - 1] || 0)} mi
-						</p>
+			{#if status.has_plan}
+				<div class="card animate-slide-up stagger-1">
+					<div class="flex items-center gap-3">
+						<div class="w-4 h-4 rounded-full bg-accent-primary"></div>
+						<div>
+							<p class="text-sm text-carbon-400">Allowance Limit</p>
+							<p class="text-lg font-mono font-semibold text-carbon-100">
+								{formatNumber(graphData.ideals[graphData.ideals.length - 1] || 0)} mi
+							</p>
+						</div>
 					</div>
 				</div>
-			</div>
+			{/if}
 		</div>
 
 		<!-- Chart -->
@@ -367,27 +372,29 @@
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-lg font-semibold text-carbon-100">{status.vehicle || status.id}</h2>
 				<div class="flex items-center gap-4">
-					<label class="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer select-none">
-						<input
-							type="checkbox"
-							bind:checked={showYears}
-							on:change={renderChart}
-							class="accent-accent-primary"
-						/>
-						Highlight plan years
-					</label>
-					<label class="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer select-none">
-						<input
-							type="checkbox"
-							bind:checked={showProjection}
-							on:change={renderChart}
-							class="accent-accent-primary"
-						/>
-						Project to plan end
-					</label>
-					<p class="text-sm text-carbon-500">
-						{formatDate(status.plan_start)} → {formatDate(status.plan_end)}
-					</p>
+					{#if status.has_plan}
+						<label class="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer select-none">
+							<input
+								type="checkbox"
+								bind:checked={showYears}
+								on:change={renderChart}
+								class="accent-accent-primary"
+							/>
+							Highlight plan years
+						</label>
+						<label class="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer select-none">
+							<input
+								type="checkbox"
+								bind:checked={showProjection}
+								on:change={renderChart}
+								class="accent-accent-primary"
+							/>
+							Project to plan end
+						</label>
+						<p class="text-sm text-carbon-500">
+							{formatDate(status.plan_start)} → {formatDate(status.plan_end)}
+						</p>
+					{/if}
 				</div>
 			</div>
 			<div class="h-[400px]">
@@ -396,17 +403,19 @@
 		</div>
 
 		<!-- Stats Summary -->
-		<div class="grid grid-cols-3 gap-4 mt-6">
+		<div class="grid {status.has_plan ? 'grid-cols-3' : 'grid-cols-2'} gap-4 mt-6">
 			<div class="card animate-slide-up stagger-3 text-center">
 				<p class="text-sm text-carbon-400 mb-1">Total Readings</p>
 				<p class="text-2xl font-mono font-bold text-carbon-100">{graphData.dates.length}</p>
 			</div>
-			<div class="card animate-slide-up stagger-4 text-center">
-				<p class="text-sm text-carbon-400 mb-1">Difference</p>
-				<p class="text-2xl font-mono font-bold {status.delta <= 0 ? 'text-gauge-green' : 'text-gauge-red'}">
-					{status.delta > 0 ? '+' : ''}{formatNumber(Math.round(status.delta))} mi
-				</p>
-			</div>
+			{#if status.has_plan}
+				<div class="card animate-slide-up stagger-4 text-center">
+					<p class="text-sm text-carbon-400 mb-1">Difference</p>
+					<p class="text-2xl font-mono font-bold {status.delta <= 0 ? 'text-gauge-green' : 'text-gauge-red'}">
+						{status.delta > 0 ? '+' : ''}{formatNumber(Math.round(status.delta))} mi
+					</p>
+				</div>
+			{/if}
 			<div class="card animate-slide-up stagger-5 text-center">
 				<p class="text-sm text-carbon-400 mb-1">Daily Rate</p>
 				<p class="text-2xl font-mono font-bold text-carbon-100">{formatNumber(status.daily_rate, 1)} mi</p>

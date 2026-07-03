@@ -28,62 +28,79 @@ var initCmd = &cobra.Command{
 		}
 
 		reader := bufio.NewReader(os.Stdin)
+		noPlan, _ := cmd.Flags().GetBool("no-plan")
 		prompt := func(msg string) (string, error) {
 			fmt.Print(msg)
 			input, err := reader.ReadString('\n')
 			return strings.TrimSpace(input), err
 		}
 
-		startStr, err := prompt("Plan start date (YYYY-MM-DD): ")
-		if err != nil {
-			return err
-		}
-		startDate, err := time.Parse("2006-01-02", startStr)
-		if err != nil {
-			return err
-		}
-
-		endStr, err := prompt("Plan end date (YYYY-MM-DD): ")
-		if err != nil {
-			return err
-		}
-		endDate, err := time.Parse("2006-01-02", endStr)
-		if err != nil {
-			return err
-		}
-
-		startMilesStr, err := prompt("Start miles: ")
-		if err != nil {
-			return err
-		}
-		startMiles, err := strconv.Atoi(startMilesStr)
-		if err != nil {
-			return err
-		}
-
-		annualStr, err := prompt("Annual allowance (miles): ")
-		if err != nil {
-			return err
-		}
-		annual, err := strconv.Atoi(annualStr)
-		if err != nil {
-			return err
-		}
-
-		excessRate, _ := cmd.Flags().GetInt("excess-rate")
-
 		data := model.VehicleData{
 			Vehicle: carID,
-			Plan: model.Plan{
+			Readings: map[string]int{
+				time.Now().Format("2006-01-02"): 0,
+			},
+		}
+		if noPlan {
+			startMilesStr, err := prompt("Current odometer: ")
+			if err != nil {
+				return err
+			}
+			startMiles, err := strconv.Atoi(startMilesStr)
+			if err != nil {
+				return err
+			}
+			data.Readings = map[string]int{
+				time.Now().Format("2006-01-02"): startMiles,
+			}
+		} else {
+			startStr, err := prompt("Plan start date (YYYY-MM-DD): ")
+			if err != nil {
+				return err
+			}
+			startDate, err := time.Parse("2006-01-02", startStr)
+			if err != nil {
+				return err
+			}
+
+			endStr, err := prompt("Plan end date (YYYY-MM-DD): ")
+			if err != nil {
+				return err
+			}
+			endDate, err := time.Parse("2006-01-02", endStr)
+			if err != nil {
+				return err
+			}
+
+			startMilesStr, err := prompt("Start miles: ")
+			if err != nil {
+				return err
+			}
+			startMiles, err := strconv.Atoi(startMilesStr)
+			if err != nil {
+				return err
+			}
+
+			annualStr, err := prompt("Annual allowance (miles): ")
+			if err != nil {
+				return err
+			}
+			annual, err := strconv.Atoi(annualStr)
+			if err != nil {
+				return err
+			}
+
+			excessRate, _ := cmd.Flags().GetInt("excess-rate")
+			data.Plan = &model.Plan{
 				Start:           startDate,
 				End:             endDate,
 				AnnualAllowance: annual,
 				StartMiles:      startMiles,
 				ExcessRate:      excessRate,
-			},
-			Readings: map[string]int{
+			}
+			data.Readings = map[string]int{
 				startDate.Format("2006-01-02"): startMiles,
-			},
+			}
 		}
 
 		st, err := openStore()
@@ -94,7 +111,11 @@ var initCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("Created plan for %s\n", carID)
+		if noPlan {
+			fmt.Printf("Created tracker for %s\n", carID)
+		} else {
+			fmt.Printf("Created plan for %s\n", carID)
+		}
 		return nil
 	},
 }
@@ -103,4 +124,5 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().StringP("car", "c", "", "Vehicle ID")
 	initCmd.Flags().Int("excess-rate", 0, "Excess mileage penalty in pence per mile over allowance (optional)")
+	initCmd.Flags().Bool("no-plan", false, "Create a plan-less mileage tracker")
 }

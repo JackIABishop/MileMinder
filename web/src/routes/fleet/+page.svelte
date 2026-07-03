@@ -18,8 +18,12 @@
 		error = '';
 		try {
 			const resp = await getFleet();
-			// Comparative pace: order by percent_used so the worst offender leads.
-			fleet = [...resp.vehicles].sort((a, b) => b.percent_used - a.percent_used);
+			// Policy cars are ranked by allowance use; plain cars follow by recent pace.
+			fleet = [...resp.vehicles].sort((a, b) => {
+				if (a.has_plan && b.has_plan) return b.percent_used - a.percent_used;
+				if (a.has_plan !== b.has_plan) return a.has_plan ? -1 : 1;
+				return b.recent_annual_mileage - a.recent_annual_mileage;
+			});
 			insights = resp.insights;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load fleet';
@@ -100,7 +104,7 @@
 						{insights.net_delta > 0 ? '+' : ''}{formatNumber(Math.round(insights.net_delta))}<span class="text-base text-carbon-500"> mi</span>
 					</p>
 					<p class="text-xs text-carbon-500 mt-1">
-						{insights.count_over} over · {insights.count_under} under
+						{insights.count_over} over · {insights.count_under} under · policy cars only
 					</p>
 				</div>
 				<div class="card animate-slide-up stagger-1">
@@ -109,13 +113,14 @@
 						{formatNumber(Math.round(insights.total_avg_annual_mileage))}<span class="text-base text-carbon-500"> mi/yr</span>
 					</p>
 					<p class="text-xs text-carbon-500 mt-1">Lifetime average, all cars</p>
+					<p class="text-xs text-carbon-600 mt-1">{insights.policy_vehicles} policy · {insights.plain_vehicles} tracking only</p>
 				</div>
 				<div class="card animate-slide-up stagger-2">
 					<p class="text-sm text-carbon-400 mb-1">Fleet avg pace</p>
 					<p class="text-3xl font-mono font-bold text-carbon-100">
 						{Math.round(insights.avg_percent_used)}<span class="text-base text-carbon-500">%</span>
 					</p>
-					<p class="text-xs text-carbon-500 mt-1">Mean allowance used</p>
+					<p class="text-xs text-carbon-500 mt-1">Mean allowance used, policy cars only</p>
 				</div>
 				<div class="card animate-slide-up stagger-3 {insights.net_delta > 0 ? 'border-gauge-red/30' : ''}">
 					<p class="text-sm text-carbon-400 mb-1">Worst offender</p>
@@ -151,9 +156,15 @@
 					{/if}
 
 					<div class="flex items-start gap-4">
-						<Gauge percent={vehicle.percent_used} size={80} strokeWidth={6}>
-							<span class="text-sm font-mono font-bold">{Math.round(vehicle.percent_used)}%</span>
-						</Gauge>
+						{#if vehicle.has_plan}
+							<Gauge percent={vehicle.percent_used} size={80} strokeWidth={6}>
+								<span class="text-sm font-mono font-bold">{Math.round(vehicle.percent_used)}%</span>
+							</Gauge>
+						{:else}
+							<div class="w-20 h-20 rounded-lg bg-carbon-800/70 flex items-center justify-center text-center px-2">
+								<span class="text-xs font-medium text-carbon-300">Tracking only</span>
+							</div>
+						{/if}
 
 						<div class="flex-1 min-w-0">
 							<h3 class="font-semibold text-lg text-carbon-100 truncate">
@@ -166,22 +177,33 @@
 									<span class="text-carbon-400">Odometer</span>
 									<span class="font-mono text-carbon-100">{formatNumber(vehicle.latest_reading)} mi</span>
 								</div>
-								<div class="flex justify-between text-sm">
-									<span class="text-carbon-400">Delta</span>
-									<span class="font-mono {vehicle.delta <= 0 ? 'text-gauge-green' : 'text-gauge-red'}">
-										{vehicle.delta > 0 ? '+' : ''}{formatNumber(Math.round(vehicle.delta))} mi
-									</span>
-								</div>
-								<div class="flex justify-between text-sm">
-									<span class="text-carbon-400">Term left</span>
-									<span class="font-mono text-carbon-100">{getTermString(vehicle)}</span>
-								</div>
+								{#if vehicle.has_plan}
+									<div class="flex justify-between text-sm">
+										<span class="text-carbon-400">Delta</span>
+										<span class="font-mono {vehicle.delta <= 0 ? 'text-gauge-green' : 'text-gauge-red'}">
+											{vehicle.delta > 0 ? '+' : ''}{formatNumber(Math.round(vehicle.delta))} mi
+										</span>
+									</div>
+									<div class="flex justify-between text-sm">
+										<span class="text-carbon-400">Term left</span>
+										<span class="font-mono text-carbon-100">{getTermString(vehicle)}</span>
+									</div>
+								{:else}
+									<div class="flex justify-between text-sm">
+										<span class="text-carbon-400">Avg pace</span>
+										<span class="font-mono text-carbon-100">{formatNumber(Math.round(vehicle.avg_annual_mileage))} mi/yr</span>
+									</div>
+									<div class="flex justify-between text-sm">
+										<span class="text-carbon-400">Recent pace</span>
+										<span class="font-mono text-carbon-100">{formatNumber(Math.round(vehicle.recent_annual_mileage))} mi/yr</span>
+									</div>
+								{/if}
 							</div>
 						</div>
 					</div>
 
 					<!-- Comparative pace vs the fleet average -->
-					{#if insights}
+					{#if insights && vehicle.has_plan}
 						<div class="mt-4">
 							<div class="flex justify-between text-xs text-carbon-500 mb-1">
 								<span>Pace vs fleet avg</span>
@@ -223,8 +245,13 @@
 
 					<div class="mt-3 pt-3 border-t border-carbon-800">
 						<div class="flex justify-between text-xs text-carbon-500">
-							<span>Plan: {formatDate(vehicle.plan_start)} → {formatDate(vehicle.plan_end)}</span>
-							<span>{formatNumber(vehicle.annual_allowance)} mi/yr</span>
+							{#if vehicle.has_plan}
+								<span>Plan: {formatDate(vehicle.plan_start)} → {formatDate(vehicle.plan_end)}</span>
+								<span>{formatNumber(vehicle.annual_allowance)} mi/yr</span>
+							{:else}
+								<span>No allowance policy</span>
+								<span>{vehicle.pace_trend}</span>
+							{/if}
 						</div>
 					</div>
 				</div>

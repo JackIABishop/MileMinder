@@ -43,13 +43,32 @@ var graphCmd = &cobra.Command{
 		var actuals []float64
 		var ideals []float64
 		// Use relative usage (miles driven since plan start)
-		baseMiles := float64(v.Plan.StartMiles)
+		baseMiles := 0.0
+		if v.Plan != nil {
+			baseMiles = float64(v.Plan.StartMiles)
+		} else if len(dates) > 0 {
+			baseMiles = float64(v.Readings[dates[0]])
+		}
 
 		for _, ds := range dates {
 			t, _ := time.Parse("2006-01-02", ds)
 			miles := float64(v.Readings[ds]) - baseMiles
 			actuals = append(actuals, miles)
-			ideals = append(ideals, calc.AllowanceMiles(v.Plan.AnnualAllowance, v.Plan.Start, t))
+			if v.Plan != nil {
+				ideals = append(ideals, calc.AllowanceMiles(v.Plan.AnnualAllowance, v.Plan.Start, t))
+			}
+		}
+
+		if v.Plan == nil {
+			graph := asciigraph.Plot(
+				actuals,
+				asciigraph.SeriesColors(asciigraph.Green),
+				asciigraph.Width(60),
+				asciigraph.Height(15),
+				asciigraph.Caption(fmt.Sprintf("Mileage Tracking for %s", carID)),
+			)
+			fmt.Println(graph)
+			return nil
 		}
 
 		// Combine into one graph, plotting actuals and ideals

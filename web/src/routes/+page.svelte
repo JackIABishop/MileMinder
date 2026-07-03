@@ -96,6 +96,7 @@
 			<a href="/settings" class="btn-primary mt-4 inline-block">Add a Vehicle</a>
 		</div>
 	{:else if status}
+		{#if status.has_plan}
 		<!-- Main Gauge -->
 		<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
 			<div class="lg:col-span-1 card flex flex-col items-center justify-center py-8 animate-slide-up">
@@ -292,6 +293,57 @@
 				</div>
 			{/if}
 		</div>
+		{:else}
+			<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+				<div class="lg:col-span-1 card flex flex-col justify-center py-8 animate-slide-up">
+					<p class="text-sm text-carbon-500 mb-2">No allowance policy</p>
+					<p class="text-5xl font-mono font-bold text-carbon-100">{formatNumber(status.latest_reading)}</p>
+					<p class="text-lg text-carbon-400 mt-1">mi current odometer</p>
+				</div>
+
+				<div class="lg:col-span-2 grid grid-cols-2 gap-4">
+					<StatCard 
+						title="Current Odometer" 
+						value={formatNumber(status.latest_reading)} 
+						unit="mi"
+						subtitle="Last updated {formatDate(status.latest_date)}"
+					/>
+					<StatCard 
+						title="Daily Rate" 
+						value={formatNumber(status.daily_rate, 1)} 
+						unit="mi/day"
+						subtitle="Lifetime pace"
+					/>
+					<div class="col-span-2 card animate-slide-up">
+						<h3 class="text-sm font-medium text-carbon-400 mb-3">Average Annual Mileage</h3>
+						<div class="flex items-end justify-between gap-4">
+							<div>
+								<div class="flex items-baseline gap-1">
+									<span class="number-display text-carbon-100">{formatNumber(Math.round(status.avg_annual_mileage))}</span>
+									<span class="number-unit">mi/yr</span>
+								</div>
+								<p class="mt-1 text-xs text-carbon-500">Lifetime average</p>
+							</div>
+							<div class="text-right">
+								<div class="flex items-baseline gap-1 justify-end">
+									<span class="font-mono text-xl font-semibold text-carbon-300">{formatNumber(Math.round(status.recent_annual_mileage))}</span>
+									<span class="text-sm text-carbon-500">mi/yr</span>
+								</div>
+								<div class="mt-1 flex items-center justify-end gap-2">
+									<p class="text-xs text-carbon-500">Last 90 days</p>
+									{#if trendBadge}
+										<span class="flex items-center gap-1 text-xs font-medium {trendBadge.color}">
+											<span>{trendBadge.icon}</span>
+											<span>{trendBadge.label}</span>
+										</span>
+									{/if}
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		{/if}
 
 		<!-- Quick Add Section -->
 		<div class="card animate-slide-up stagger-5">

@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackiabishop/mileminder/internal/calc"
@@ -23,6 +26,43 @@ type Server struct{}
 // NewServer returns a Server.
 func NewServer() *Server {
 	return &Server{}
+}
+
+type apiErrorResponse struct {
+	Error apiError `json:"error"`
+}
+
+type apiError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func writeValidationError(w http.ResponseWriter, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(apiErrorResponse{
+		Error: apiError{
+			Code:    code,
+			Message: message,
+		},
+	})
+}
+
+type wholePence int
+
+func (p *wholePence) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil
+	}
+	f, err := strconv.ParseFloat(string(b), 64)
+	if err != nil {
+		return errors.New("excess_rate must be a whole number of pence")
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) || math.Trunc(f) != f {
+		return errors.New("excess_rate must be a whole number of pence")
+	}
+	*p = wholePence(f)
+	return nil
 }
 
 // writeStoreError maps a storage error onto an HTTP response: a missing
@@ -129,42 +169,61 @@ func (s *Server) HandleGetVehicle(w http.ResponseWriter, r *http.Request) {
 // is tracked separately in #31.
 func (s *Server) HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID              string `json:"id"`
-		Vehicle         string `json:"vehicle"`
-		StartDate       string `json:"start_date"`
-		EndDate         string `json:"end_date"`
-		AnnualAllowance int    `json:"annual_allowance"`
-		StartMiles      int    `json:"start_miles"`
-		ExcessRate      int    `json:"excess_rate"`
+		ID              string     `json:"id"`
+		Vehicle         string     `json:"vehicle"`
+		StartDate       string     `json:"start_date"`
+		EndDate         string     `json:"end_date"`
+		AnnualAllowance *int       `json:"annual_allowance"`
+		StartMiles      int        `json:"start_miles"`
+		ExcessRate      wholePence `json:"excess_rate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		if strings.Contains(err.Error(), "excess_rate") {
+			writeValidationError(w, "invalid_excess_rate", "excess_rate must be a whole number of pence")
+		} else {
+			writeValidationError(w, "invalid_json", err.Error())
+		}
 		return
 	}
 
-	startDate, err := time.Parse("2006-01-02", req.StartDate)
-	if err != nil {
-		http.Error(w, "invalid start_date", http.StatusBadRequest)
+	hasPlanFields := req.EndDate != "" || req.AnnualAllowance != nil
+	if hasPlanFields && (req.StartDate == "" || req.EndDate == "" || req.AnnualAllowance == nil) {
+		writeValidationError(w, "incomplete_plan", "provide start_date, end_date and annual_allowance together, or none for a plan-less vehicle")
 		return
 	}
-	endDate, err := time.Parse("2006-01-02", req.EndDate)
+	if req.ExcessRate < 0 {
+		writeValidationError(w, "invalid_excess_rate", "excess_rate must not be negative")
+		return
+	}
+
+	if req.StartDate == "" {
+		req.StartDate = time.Now().Format("2006-01-02")
+	}
+	startDate, err := time.Parse("2006-01-02", req.StartDate)
 	if err != nil {
-		http.Error(w, "invalid end_date", http.StatusBadRequest)
+		writeValidationError(w, "invalid_start_date", "invalid start_date")
 		return
 	}
 
 	data := &model.VehicleData{
 		Vehicle: req.Vehicle,
-		Plan: model.Plan{
-			Start:           startDate,
-			End:             endDate,
-			AnnualAllowance: req.AnnualAllowance,
-			StartMiles:      req.StartMiles,
-			ExcessRate:      req.ExcessRate,
-		},
 		Readings: map[string]int{
 			req.StartDate: req.StartMiles,
 		},
+	}
+	if hasPlanFields {
+		endDate, err := time.Parse("2006-01-02", req.EndDate)
+		if err != nil {
+			writeValidationError(w, "invalid_end_date", "invalid end_date")
+			return
+		}
+		data.Plan = &model.Plan{
+			Start:           startDate,
+			End:             endDate,
+			AnnualAllowance: *req.AnnualAllowance,
+			StartMiles:      req.StartMiles,
+			ExcessRate:      int(req.ExcessRate),
+		}
 	}
 
 	if err := storeFrom(r.Context()).SaveVehicle(r.Context(), req.ID, data); err != nil {
@@ -191,10 +250,18 @@ func (s *Server) HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
 	// Pointer fields so an omitted key leaves the existing value untouched
 	// (rather than zeroing it).
 	var req struct {
-		ExcessRate *int `json:"excess_rate"`
+		ExcessRate      *wholePence `json:"excess_rate"`
+		StartDate       *string     `json:"start_date"`
+		EndDate         *string     `json:"end_date"`
+		AnnualAllowance *int        `json:"annual_allowance"`
+		StartMiles      *int        `json:"start_miles"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		if strings.Contains(err.Error(), "excess_rate") {
+			writeValidationError(w, "invalid_excess_rate", "excess_rate must be a whole number of pence")
+		} else {
+			writeValidationError(w, "invalid_json", err.Error())
+		}
 		return
 	}
 
@@ -204,12 +271,51 @@ func (s *Server) HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.ExcessRate != nil {
-		if *req.ExcessRate < 0 {
-			http.Error(w, "excess_rate must not be negative", http.StatusBadRequest)
+	hasConversionFields := req.StartDate != nil || req.EndDate != nil || req.AnnualAllowance != nil || req.StartMiles != nil
+	if hasConversionFields {
+		if data.Plan != nil {
+			writeValidationError(w, "vehicle_already_has_plan", "vehicle already has a plan")
 			return
 		}
-		data.Plan.ExcessRate = *req.ExcessRate
+		if req.StartDate == nil || req.EndDate == nil || req.AnnualAllowance == nil || req.StartMiles == nil {
+			writeValidationError(w, "incomplete_plan", "provide start_date, end_date, annual_allowance and start_miles together")
+			return
+		}
+		startDate, err := time.Parse("2006-01-02", *req.StartDate)
+		if err != nil {
+			writeValidationError(w, "invalid_start_date", "invalid start_date")
+			return
+		}
+		endDate, err := time.Parse("2006-01-02", *req.EndDate)
+		if err != nil {
+			writeValidationError(w, "invalid_end_date", "invalid end_date")
+			return
+		}
+		excessRate := 0
+		if req.ExcessRate != nil {
+			excessRate = int(*req.ExcessRate)
+		}
+		if excessRate < 0 {
+			writeValidationError(w, "invalid_excess_rate", "excess_rate must not be negative")
+			return
+		}
+		data.Plan = &model.Plan{
+			Start:           startDate,
+			End:             endDate,
+			AnnualAllowance: *req.AnnualAllowance,
+			StartMiles:      *req.StartMiles,
+			ExcessRate:      excessRate,
+		}
+	} else if req.ExcessRate != nil {
+		if data.Plan == nil {
+			writeValidationError(w, "vehicle_has_no_plan", "vehicle has no allowance plan")
+			return
+		}
+		if *req.ExcessRate < 0 {
+			writeValidationError(w, "invalid_excess_rate", "excess_rate must not be negative")
+			return
+		}
+		data.Plan.ExcessRate = int(*req.ExcessRate)
 	}
 
 	if err := storeFrom(r.Context()).SaveVehicle(r.Context(), id, data); err != nil {
@@ -339,14 +445,21 @@ func (s *Server) HandleGetGraphData(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(dates)
 
 	var actuals []float64
-	var ideals []float64
-	baseMiles := float64(data.Plan.StartMiles)
+	ideals := []float64{}
+	baseMiles := 0.0
+	if data.Plan != nil {
+		baseMiles = float64(data.Plan.StartMiles)
+	} else if len(dates) > 0 {
+		baseMiles = float64(data.Readings[dates[0]])
+	}
 
 	for _, ds := range dates {
 		t, _ := time.Parse("2006-01-02", ds)
 		miles := float64(data.Readings[ds]) - baseMiles
 		actuals = append(actuals, miles)
-		ideals = append(ideals, calc.AllowanceMiles(data.Plan.AnnualAllowance, data.Plan.Start, t))
+		if data.Plan != nil {
+			ideals = append(ideals, calc.AllowanceMiles(data.Plan.AnnualAllowance, data.Plan.Start, t))
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
