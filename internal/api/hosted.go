@@ -6,7 +6,9 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/jackiabishop/mileminder/internal/alerts"
 	"github.com/jackiabishop/mileminder/internal/auth"
+	"github.com/jackiabishop/mileminder/internal/notify"
 	"github.com/jackiabishop/mileminder/internal/storage"
 )
 
@@ -16,6 +18,13 @@ type HostedConfig struct {
 	Users    auth.UserStore
 	Sessions auth.SessionStore
 	Tenants  storage.Tenants
+
+	// Notifier is wired in hosted mode for flows that need outbound messages.
+	// Alert scheduling uses it outside the router today; password reset (#33)
+	// will read it from handlers.
+	Notifier notify.Channel
+
+	AlertPrefs alerts.PrefsStore
 
 	// SecureCookies sets the Secure flag on session cookies. True in real hosted
 	// deployments (TLS terminated at the edge); left false for plain-HTTP tests.
@@ -86,6 +95,11 @@ func hostedMux(cfg HostedConfig) *http.ServeMux {
 	sess := requireSession(cfg.Sessions, cfg.Tenants, cfg.SecureCookies)
 	mux.Handle("POST /api/v1/auth/logout", sess(http.HandlerFunc(a.HandleLogout)))
 	mux.Handle("GET /api/v1/auth/me", sess(http.HandlerFunc(a.HandleMe)))
+	if cfg.AlertPrefs != nil {
+		alertsAPI := &alertPrefsAPI{prefs: cfg.AlertPrefs}
+		mux.Handle("GET /api/v1/alerts/prefs", sess(http.HandlerFunc(alertsAPI.HandleGetPrefs)))
+		mux.Handle("PUT /api/v1/alerts/prefs", sess(http.HandlerFunc(alertsAPI.HandlePutPrefs)))
+	}
 	registerDataRoutes(mux, NewServer(), sess)
 
 	return mux

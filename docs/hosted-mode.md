@@ -25,6 +25,8 @@ Flags (all also settable by env var, for containers):
 | `--hosted` | `MILEMINDER_HOSTED` | off | Enable multi-user mode |
 | `--data-dir` | `MILEMINDER_DATA_DIR` | `~/.mileminder-hosted` | Hosted data root |
 | `--secure-cookies` | — | `true` | `Secure` flag on session cookies |
+| `--alerts-interval` | `MILEMINDER_ALERTS_INTERVAL` | `1h` | Background alert sweep cadence |
+| `--no-alerts` | — | off | Disable the hosted alert scheduler |
 
 **TLS is assumed to be terminated by the platform** (Fly.io / Render / a reverse
 proxy). Session cookies are set `Secure` by default, so they are only sent over
@@ -55,6 +57,8 @@ A hosted user's directory is **byte-compatible with a single-user `~/.mileminder
 ```
 <data-dir>/users.yml              # accounts (bcrypt hashes)
 <data-dir>/sessions.yml           # active sessions (token hashes)
+<data-dir>/alert_prefs.yml        # per-user alert preferences
+<data-dir>/alerts_state.yml       # per-user/vehicle alert dedup state
 <data-dir>/users/<userID>/<vehicleID>.yml
 <data-dir>/users/<userID>/current
 ```
@@ -62,6 +66,31 @@ A hosted user's directory is **byte-compatible with a single-user `~/.mileminder
 > These file-backed user/session stores are the **Phase 2 interim**. Phase 3
 > replaces them with managed Postgres behind the same `auth.UserStore` /
 > `auth.SessionStore` / `storage.Tenants` interfaces — no handler changes.
+
+## Allowance alerts
+
+Hosted mode starts an in-process scheduler unless `--no-alerts` is set. Each
+sweep recomputes every user's policy vehicles and sends an email only when a
+vehicle crosses from OK to breached. Existing breached vehicles are silently
+recorded on first observation, so turning on alerts for old data does not send a
+burst.
+
+Alert preferences are available in Settings and through
+`GET/PUT /api/v1/alerts/prefs`. Defaults are `enabled=true` and
+`threshold=100`.
+
+SMTP is configured only through environment variables:
+
+| Env | Purpose |
+|---|---|
+| `MILEMINDER_SMTP_HOST` | SMTP host; unset means alerts are logged locally |
+| `MILEMINDER_SMTP_PORT` | SMTP port, default `587` |
+| `MILEMINDER_SMTP_USER` | SMTP username |
+| `MILEMINDER_SMTP_PASS` | SMTP password |
+| `MILEMINDER_SMTP_FROM` | From address, required when SMTP host is set |
+
+When SMTP is unset, MileMinder uses a log channel and prints a startup warning.
+That keeps local hosted mode fully runnable without email credentials.
 
 ## Claiming your existing data (migration by copy)
 
