@@ -17,12 +17,13 @@ import (
 type HostedConfig struct {
 	Users    auth.UserStore
 	Sessions auth.SessionStore
+	Resets   auth.PasswordResetStore
 	Tenants  storage.Tenants
 
 	// Notifier is wired in hosted mode for flows that need outbound messages.
-	// Alert scheduling uses it outside the router today; password reset (#33)
-	// will read it from handlers.
+	// Alert scheduling uses it outside the router; password reset uses it here.
 	Notifier notify.Channel
+	BaseURL  string
 
 	AlertPrefs alerts.PrefsStore
 
@@ -71,6 +72,9 @@ func hostedMux(cfg HostedConfig) *http.ServeMux {
 	a := &authAPI{
 		users:         cfg.Users,
 		sessions:      cfg.Sessions,
+		resets:        cfg.Resets,
+		notifier:      cfg.Notifier,
+		baseURL:       cfg.BaseURL,
 		checkPassword: check,
 		secureCookies: cfg.SecureCookies,
 	}
@@ -90,11 +94,14 @@ func hostedMux(cfg HostedConfig) *http.ServeMux {
 	limiter := newIPRateLimiter(limitPerSec, burst)
 	mux.Handle("POST /api/v1/auth/signup", limiter.wrap(http.HandlerFunc(a.HandleSignup)))
 	mux.Handle("POST /api/v1/auth/login", limiter.wrap(http.HandlerFunc(a.HandleLogin)))
+	mux.Handle("POST /api/v1/auth/forgot", limiter.wrap(http.HandlerFunc(a.HandleForgotPassword)))
+	mux.Handle("POST /api/v1/auth/reset", limiter.wrap(http.HandlerFunc(a.HandleResetPassword)))
 
 	// Session-required routes: auth introspection + all data.
 	sess := requireSession(cfg.Sessions, cfg.Tenants, cfg.SecureCookies)
 	mux.Handle("POST /api/v1/auth/logout", sess(http.HandlerFunc(a.HandleLogout)))
 	mux.Handle("GET /api/v1/auth/me", sess(http.HandlerFunc(a.HandleMe)))
+	mux.Handle("POST /api/v1/auth/password", sess(http.HandlerFunc(a.HandleChangePassword)))
 	if cfg.AlertPrefs != nil {
 		alertsAPI := &alertPrefsAPI{prefs: cfg.AlertPrefs}
 		mux.Handle("GET /api/v1/alerts/prefs", sess(http.HandlerFunc(alertsAPI.HandleGetPrefs)))

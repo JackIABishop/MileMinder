@@ -24,6 +24,7 @@ Flags (all also settable by env var, for containers):
 |---|---|---|---|
 | `--hosted` | `MILEMINDER_HOSTED` | off | Enable multi-user mode |
 | `--data-dir` | `MILEMINDER_DATA_DIR` | `~/.mileminder-hosted` | Hosted data root |
+| `--base-url` | `MILEMINDER_BASE_URL` | `http://localhost:<port>` | Public URL used in email links |
 | `--secure-cookies` | — | `true` | `Secure` flag on session cookies |
 | `--alerts-interval` | `MILEMINDER_ALERTS_INTERVAL` | `1h` | Background alert sweep cadence |
 | `--no-alerts` | — | off | Disable the hosted alert scheduler |
@@ -41,6 +42,9 @@ mileminder serve --hosted --data-dir /tmp/mm-hosted --secure-cookies=false --no-
 - **Passwords** are hashed with bcrypt (cost 12).
 - **Sessions** are opaque 256-bit tokens; only their SHA-256 is stored. Logout
   deletes the session. Sessions slide to a 30-day expiry on use.
+- **Password resets** are single-use 256-bit tokens, stored hashed at rest, and
+  expire after 1 hour. A password change keeps the current session and revokes
+  other sessions; a reset revokes every session for the user.
 - **Transport**: the SPA uses an `HttpOnly`, `SameSite=Lax` cookie (no token in
   JS). Native/CLI clients use `Authorization: Bearer <token>` (returned in the
   login/signup response body).
@@ -57,6 +61,7 @@ A hosted user's directory is **byte-compatible with a single-user `~/.mileminder
 ```
 <data-dir>/users.yml              # accounts (bcrypt hashes)
 <data-dir>/sessions.yml           # active sessions (token hashes)
+<data-dir>/resets.yml             # outstanding password reset token hashes
 <data-dir>/alert_prefs.yml        # per-user alert preferences
 <data-dir>/alerts_state.yml       # per-user/vehicle alert dedup state
 <data-dir>/users/<userID>/<vehicleID>.yml
@@ -92,6 +97,10 @@ SMTP is configured only through environment variables:
 When SMTP is unset, MileMinder uses a log channel and prints a startup warning.
 That keeps local hosted mode fully runnable without email credentials.
 
+`MILEMINDER_BASE_URL` should be set in deployed hosted mode so alert and password
+reset emails point at the public site. The server never builds reset links from
+the request `Host` header.
+
 ## Claiming your existing data (migration by copy)
 
 Because a hosted user directory has the same layout as `~/.mileminder`, moving
@@ -107,23 +116,9 @@ cp ~/.mileminder/*.yml ~/.mileminder/current \
 Restart is not required — the next request reads the copied files. (Bulk history
 import via CSV is tracked separately in #8; real device↔server sync is Phase 5.)
 
-## Recovering a locked-out user (until password reset ships)
+## Password recovery
 
-Self-service password reset is **deferred to Phase 4** (#33) because it needs the
-email channel. Until then, an operator recovers a user who has forgotten their
-password manually:
-
-1. Remove the user's entry from `<data-dir>/users.yml` (the block with their
-   `email`). Note their `id` first — it's their data directory name.
-2. Remove any of their rows from `<data-dir>/sessions.yml` (match `user_id`), or
-   simply clear the file; that only signs everyone out.
-3. Have them sign up again with the same email. This creates a **new** account
-   with a **new** `id` and an empty garage.
-4. To preserve their existing vehicles, move the old data directory onto the new
-   id:
-
-   ```bash
-   mv <data-dir>/users/<old-id>/* <data-dir>/users/<new-id>/
-   ```
-
-This is deliberately manual and operator-only. Do not expose it as an endpoint.
+Hosted users can request a reset from `/forgot`. The response is the same for
+known and unknown email addresses. For an existing account, MileMinder emails a
+single-use link to `/reset?token=...`; requesting again invalidates the previous
+link. Successful reset changes the password and signs out every existing session.

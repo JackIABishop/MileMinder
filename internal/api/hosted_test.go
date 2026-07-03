@@ -7,13 +7,16 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackiabishop/mileminder/internal/alerts"
 	"github.com/jackiabishop/mileminder/internal/api"
 	"github.com/jackiabishop/mileminder/internal/auth"
+	"github.com/jackiabishop/mileminder/internal/notify"
 	"github.com/jackiabishop/mileminder/internal/storage"
 )
 
@@ -23,6 +26,8 @@ type hostedFixture struct {
 	srv      *httptest.Server
 	users    *auth.MemoryUserStore
 	sessions *auth.MemorySessionStore
+	resets   *auth.MemoryPasswordResetStore
+	notifier *notify.Fake
 	tenants  *storage.MemoryTenants
 	prefs    *alerts.MemoryPrefsStore
 }
@@ -35,13 +40,18 @@ func newHostedServer(t *testing.T, mutate func(*api.HostedConfig)) hostedFixture
 	f := hostedFixture{
 		users:    auth.NewMemoryUserStore(),
 		sessions: auth.NewMemorySessionStore(),
+		resets:   auth.NewMemoryPasswordResetStore(),
+		notifier: notify.NewFake(),
 		tenants:  storage.NewMemoryTenants(),
 		prefs:    alerts.NewMemoryPrefsStore(),
 	}
 	cfg := api.HostedConfig{
 		Users:          f.users,
 		Sessions:       f.sessions,
+		Resets:         f.resets,
 		Tenants:        f.tenants,
+		Notifier:       f.notifier,
+		BaseURL:        "https://mileminder.example",
 		AlertPrefs:     f.prefs,
 		SecureCookies:  false, // plain-HTTP httptest
 		AuthRatePerSec: 1000,
@@ -85,6 +95,70 @@ func signup(t *testing.T, srv *httptest.Server, client *http.Client, email, pass
 		t.Fatal(err)
 	}
 	return out.Token
+}
+
+func login(t *testing.T, srv *httptest.Server, client *http.Client, email, password string, want int) string {
+	t.Helper()
+	body := strings.NewReader(`{"email":"` + email + `","password":"` + password + `"}`)
+	resp, err := client.Post(srv.URL+"/api/v1/auth/login", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != want {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("login %s: want %d, got %d (%s)", email, want, resp.StatusCode, b)
+	}
+	if want != http.StatusOK {
+		return ""
+	}
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Token
+}
+
+func postJSON(t *testing.T, client *http.Client, url, body string) (int, string) {
+	t.Helper()
+	resp, err := client.Post(url, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(raw)
+}
+
+func forgotPassword(t *testing.T, srv *httptest.Server, email string) (int, string) {
+	t.Helper()
+	return postJSON(t, http.DefaultClient, srv.URL+"/api/v1/auth/forgot", `{"email":"`+email+`"}`)
+}
+
+func waitForDeliveries(t *testing.T, ch *notify.Fake, want int) []notify.Delivery {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		deliveries := ch.Deliveries()
+		if len(deliveries) >= want {
+			return deliveries
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("want at least %d deliveries, got %d", want, len(ch.Deliveries()))
+	return nil
+}
+
+func resetTokenFromDelivery(t *testing.T, delivery notify.Delivery) string {
+	t.Helper()
+	re := regexp.MustCompile(`token=([A-Za-z0-9_-]+)`)
+	matches := re.FindStringSubmatch(delivery.Message.Body)
+	if len(matches) != 2 {
+		t.Fatalf("reset email body does not contain token: %q", delivery.Message.Body)
+	}
+	return matches[1]
 }
 
 func createVehicle(t *testing.T, srv *httptest.Server, client *http.Client, id string) {
@@ -353,27 +427,223 @@ func TestHostedDuplicateSignupConflicts(t *testing.T) {
 	}
 }
 
-func TestHostedRateLimitsAuth(t *testing.T) {
-	f := newHostedServer(t, func(cfg *api.HostedConfig) {
-		cfg.AuthRatePerSec = 0.01 // effectively no refill during the test
-		cfg.AuthRateBurst = 3
-	})
+func TestHostedChangePassword(t *testing.T) {
+	f := newHostedServer(t, nil)
+	client := newClient(t)
+	signup(t, f.srv, client, "alice@example.com", "oldpassword")
 
-	got429 := false
-	for i := 0; i < 10; i++ {
-		body := strings.NewReader(`{"email":"x@example.com","password":"wrongpassword"}`)
-		resp, err := http.Post(f.srv.URL+"/api/v1/auth/login", "application/json", body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode == http.StatusTooManyRequests {
-			got429 = true
-			break
-		}
+	status, body := postJSON(t, client, f.srv.URL+"/api/v1/auth/password", `{"current_password":"oldpassword","new_password":"newpassword"}`)
+	if status != http.StatusOK {
+		t.Fatalf("change password: want 200, got %d (%s)", status, body)
 	}
-	if !got429 {
-		t.Fatal("expected a 429 after exhausting the auth rate-limit burst")
+
+	login(t, f.srv, newClient(t), "alice@example.com", "oldpassword", http.StatusUnauthorized)
+	login(t, f.srv, newClient(t), "alice@example.com", "newpassword", http.StatusOK)
+}
+
+func TestHostedChangePasswordValidationAndAuth(t *testing.T) {
+	f := newHostedServer(t, nil)
+	client := newClient(t)
+	signup(t, f.srv, client, "alice@example.com", "oldpassword")
+	user, err := f.users.GetUserByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := user.PasswordHash
+
+	status, _ := postJSON(t, client, f.srv.URL+"/api/v1/auth/password", `{"current_password":"wrongpassword","new_password":"newpassword"}`)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("wrong current password: want 401, got %d", status)
+	}
+	user, err = f.users.GetUserByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.PasswordHash != before {
+		t.Fatal("wrong current password changed the password hash")
+	}
+
+	status, _ = postJSON(t, client, f.srv.URL+"/api/v1/auth/password", `{"current_password":"oldpassword","new_password":"short"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("short new password: want 400, got %d", status)
+	}
+
+	status, _ = postJSON(t, newClient(t), f.srv.URL+"/api/v1/auth/password", `{"current_password":"oldpassword","new_password":"newpassword"}`)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated change: want 401, got %d", status)
+	}
+}
+
+func TestHostedChangePasswordRevokesOtherSessions(t *testing.T) {
+	f := newHostedServer(t, nil)
+	first := newClient(t)
+	signup(t, f.srv, first, "alice@example.com", "oldpassword")
+	secondToken := login(t, f.srv, newClient(t), "alice@example.com", "oldpassword", http.StatusOK)
+
+	status, body := postJSON(t, first, f.srv.URL+"/api/v1/auth/password", `{"current_password":"oldpassword","new_password":"newpassword"}`)
+	if status != http.StatusOK {
+		t.Fatalf("change password: want 200, got %d (%s)", status, body)
+	}
+	if list := getVehicles(t, f.srv, first); list == nil {
+		t.Fatal("current session should still authenticate")
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/api/v1/vehicles", nil)
+	req.Header.Set("Authorization", "Bearer "+secondToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("other session after password change: want 401, got %d", resp.StatusCode)
+	}
+}
+
+func TestHostedForgotResetPasswordFlow(t *testing.T) {
+	f := newHostedServer(t, nil)
+	signup(t, f.srv, newClient(t), "alice@example.com", "oldpassword")
+
+	status, body := forgotPassword(t, f.srv, "alice@example.com")
+	if status != http.StatusOK {
+		t.Fatalf("forgot: want 200, got %d (%s)", status, body)
+	}
+	token := resetTokenFromDelivery(t, waitForDeliveries(t, f.notifier, 1)[0])
+
+	status, body = postJSON(t, http.DefaultClient, f.srv.URL+"/api/v1/auth/reset", `{"token":"`+token+`","new_password":"newpassword"}`)
+	if status != http.StatusOK {
+		t.Fatalf("reset: want 200, got %d (%s)", status, body)
+	}
+
+	login(t, f.srv, newClient(t), "alice@example.com", "oldpassword", http.StatusUnauthorized)
+	login(t, f.srv, newClient(t), "alice@example.com", "newpassword", http.StatusOK)
+}
+
+func TestHostedResetTokenIsSingleUse(t *testing.T) {
+	f := newHostedServer(t, nil)
+	signup(t, f.srv, newClient(t), "alice@example.com", "oldpassword")
+	forgotPassword(t, f.srv, "alice@example.com")
+	token := resetTokenFromDelivery(t, waitForDeliveries(t, f.notifier, 1)[0])
+
+	status, body := postJSON(t, http.DefaultClient, f.srv.URL+"/api/v1/auth/reset", `{"token":"`+token+`","new_password":"newpassword"}`)
+	if status != http.StatusOK {
+		t.Fatalf("first reset: want 200, got %d (%s)", status, body)
+	}
+	status, _ = postJSON(t, http.DefaultClient, f.srv.URL+"/api/v1/auth/reset", `{"token":"`+token+`","new_password":"anothernew"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("second reset: want 400, got %d", status)
+	}
+}
+
+func TestHostedResetExpiredToken(t *testing.T) {
+	f := newHostedServer(t, nil)
+	signup(t, f.srv, newClient(t), "alice@example.com", "oldpassword")
+	user, err := f.users.GetUserByEmail(t.Context(), "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, hash, err := auth.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.resets.CreateReset(t.Context(), hash, user.ID, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	status, _ := postJSON(t, http.DefaultClient, f.srv.URL+"/api/v1/auth/reset", `{"token":"`+token+`","new_password":"newpassword"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("expired reset: want 400, got %d", status)
+	}
+}
+
+func TestHostedForgotPasswordDoesNotEnumerateUsers(t *testing.T) {
+	f := newHostedServer(t, nil)
+	signup(t, f.srv, newClient(t), "alice@example.com", "oldpassword")
+
+	unknownStatus, unknownBody := forgotPassword(t, f.srv, "nobody@example.com")
+	knownStatus, knownBody := forgotPassword(t, f.srv, "alice@example.com")
+	if unknownStatus != http.StatusOK || knownStatus != http.StatusOK {
+		t.Fatalf("forgot statuses: unknown=%d known=%d, want both 200", unknownStatus, knownStatus)
+	}
+	if unknownBody != knownBody {
+		t.Fatalf("forgot bodies differ:\n unknown=%q\n known=%q", unknownBody, knownBody)
+	}
+	waitForDeliveries(t, f.notifier, 1)
+}
+
+func TestHostedResetRevokesLiveSessions(t *testing.T) {
+	f := newHostedServer(t, nil)
+	client := newClient(t)
+	token := signup(t, f.srv, client, "alice@example.com", "oldpassword")
+	forgotPassword(t, f.srv, "alice@example.com")
+	resetToken := resetTokenFromDelivery(t, waitForDeliveries(t, f.notifier, 1)[0])
+
+	status, body := postJSON(t, http.DefaultClient, f.srv.URL+"/api/v1/auth/reset", `{"token":"`+resetToken+`","new_password":"newpassword"}`)
+	if status != http.StatusOK {
+		t.Fatalf("reset: want 200, got %d (%s)", status, body)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, f.srv.URL+"/api/v1/vehicles", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("live session after reset: want 401, got %d", resp.StatusCode)
+	}
+}
+
+func TestHostedForgotPasswordReplacesOldToken(t *testing.T) {
+	f := newHostedServer(t, nil)
+	signup(t, f.srv, newClient(t), "alice@example.com", "oldpassword")
+	forgotPassword(t, f.srv, "alice@example.com")
+	firstToken := resetTokenFromDelivery(t, waitForDeliveries(t, f.notifier, 1)[0])
+	forgotPassword(t, f.srv, "alice@example.com")
+	secondToken := resetTokenFromDelivery(t, waitForDeliveries(t, f.notifier, 2)[1])
+
+	status, _ := postJSON(t, http.DefaultClient, f.srv.URL+"/api/v1/auth/reset", `{"token":"`+firstToken+`","new_password":"newpassword"}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("first replaced reset: want 400, got %d", status)
+	}
+	status, body := postJSON(t, http.DefaultClient, f.srv.URL+"/api/v1/auth/reset", `{"token":"`+secondToken+`","new_password":"newpassword"}`)
+	if status != http.StatusOK {
+		t.Fatalf("second reset: want 200, got %d (%s)", status, body)
+	}
+}
+
+func TestHostedRateLimitsAuth(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{"login", "/api/v1/auth/login", `{"email":"x@example.com","password":"wrongpassword"}`},
+		{"forgot", "/api/v1/auth/forgot", `{"email":"x@example.com"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newHostedServer(t, func(cfg *api.HostedConfig) {
+				cfg.AuthRatePerSec = 0.01 // effectively no refill during the test
+				cfg.AuthRateBurst = 3
+			})
+
+			got429 := false
+			for i := 0; i < 10; i++ {
+				resp, err := http.Post(f.srv.URL+tc.path, "application/json", strings.NewReader(tc.body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusTooManyRequests {
+					got429 = true
+					break
+				}
+			}
+			if !got429 {
+				t.Fatal("expected a 429 after exhausting the auth rate-limit burst")
+			}
+		})
 	}
 }
 

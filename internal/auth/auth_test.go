@@ -21,6 +21,12 @@ func TestMemorySessionStoreConformance(t *testing.T) {
 	})
 }
 
+func TestMemoryPasswordResetStoreConformance(t *testing.T) {
+	authtest.RunPasswordResetStore(t, func(t *testing.T) auth.PasswordResetStore {
+		return auth.NewMemoryPasswordResetStore()
+	})
+}
+
 func TestHashAndCheckPassword(t *testing.T) {
 	hash, err := auth.HashPassword("correct horse battery staple")
 	if err != nil {

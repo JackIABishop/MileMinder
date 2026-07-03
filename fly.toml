@@ -17,6 +17,7 @@ primary_region = "lhr"
 [env]
   MILEMINDER_HOSTED = "1"
   MILEMINDER_DATA_DIR = "/data"
+  MILEMINDER_BASE_URL = "https://mileminder.jackbishop.co"
 
 # Persistent volume for the YAML data store, users, sessions and alert state.
 # Create it once with: fly volumes create mileminder_data --size 1 --region lhr

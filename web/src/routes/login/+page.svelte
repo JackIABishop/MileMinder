@@ -100,6 +100,12 @@
 				</button>
 			</form>
 
+			{#if !isSignup}
+				<a href="/forgot" class="block mt-4 text-center text-sm text-carbon-400 hover:text-carbon-200 transition-colors">
+					Forgot password?
+				</a>
+			{/if}
+
 			<button
 				type="button"
 				on:click={toggleMode}
