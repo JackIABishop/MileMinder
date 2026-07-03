@@ -106,6 +106,12 @@ export interface AddReadingRequest {
 	force?: boolean;
 }
 
+export interface AlertPrefs {
+	user_id: string;
+	enabled: boolean;
+	threshold: number;
+}
+
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
 	const response = await fetch(url, {
 		...options,
@@ -202,6 +208,18 @@ export async function setCurrentVehicle(id: string): Promise<{ status: string; c
 // Fleet
 export async function getFleet(): Promise<FleetResponse> {
 	return fetchJSON<FleetResponse>(`${API_BASE}/fleet`);
+}
+
+// Hosted alert preferences
+export async function getAlertPrefs(): Promise<AlertPrefs> {
+	return fetchJSON<AlertPrefs>(`${API_BASE}/alerts/prefs`);
+}
+
+export async function updateAlertPrefs(data: Pick<AlertPrefs, 'enabled' | 'threshold'>): Promise<AlertPrefs> {
+	return fetchJSON<AlertPrefs>(`${API_BASE}/alerts/prefs`, {
+		method: 'PUT',
+		body: JSON.stringify(data)
+	});
 }
 
 // Server mode. "single-user" is the self-hosted / local binary (no auth UI);
