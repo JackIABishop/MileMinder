@@ -85,7 +85,7 @@ func runCheck(cmd *cobra.Command) (bool, error) {
 }
 
 func breached(s calc.Status, threshold float64) bool {
-	return s.Delta > 0 || s.PercentUsed >= threshold || s.ProjectedOver
+	return calc.EvaluateBreach(s, threshold).Breached()
 }
 
 func printCheckStatus(cmd *cobra.Command, s calc.Status, threshold float64) bool {

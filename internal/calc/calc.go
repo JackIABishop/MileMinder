@@ -82,6 +82,32 @@ type FleetInsights struct {
 	WorstOffenderVehicle  string  `json:"worst_offender_vehicle"`   // that car's display name, for the UI headline
 }
 
+// Breach explains which alert/check conditions a policy vehicle currently
+// violates. Plain vehicles never breach.
+type Breach struct {
+	Over          bool
+	ThresholdHit  bool
+	ProjectedOver bool
+}
+
+// Breached reports whether any breach condition is true.
+func (b Breach) Breached() bool {
+	return b.Over || b.ThresholdHit || b.ProjectedOver
+}
+
+// EvaluateBreach applies MileMinder's allowance breach predicate to a computed
+// status. Threshold is a percent-used value; 100 matches the CLI default.
+func EvaluateBreach(s Status, threshold float64) Breach {
+	if !s.HasPlan {
+		return Breach{}
+	}
+	return Breach{
+		Over:          s.Delta > 0,
+		ThresholdHit:  s.PercentUsed >= threshold,
+		ProjectedOver: s.ProjectedOver,
+	}
+}
+
 // ComputeFleetInsights aggregates a slice of per-vehicle statuses into a
 // household roll-up. "Worst offender" and comparative pace are ranked by
 // PercentUsed, which normalises across vehicles with different allowances. An
@@ -184,6 +210,12 @@ func AllowanceMiles(annualAllowance int, planStart, at time.Time) float64 {
 // ComputeStatus calculates all status metrics for a vehicle as of now.
 func ComputeStatus(id string, data *model.VehicleData) Status {
 	return computeStatus(id, data, time.Now())
+}
+
+// ComputeStatusAt calculates all status metrics for a vehicle as of now. It is
+// the public deterministic wrapper used by background jobs and tests.
+func ComputeStatusAt(id string, data *model.VehicleData, now time.Time) Status {
+	return computeStatus(id, data, now)
 }
 
 // computeStatus is the deterministic core. `now` is injected so the math is
