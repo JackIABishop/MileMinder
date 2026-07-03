@@ -66,6 +66,8 @@ type UserStore interface {
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	// GetUserByID returns the account for an id, or ErrNotFound.
 	GetUserByID(ctx context.Context, id string) (*User, error)
+	// ListUsers returns every account.
+	ListUsers(ctx context.Context) ([]*User, error)
 }
 
 // SessionStore persists sessions keyed by token hash.

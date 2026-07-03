@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 )
@@ -64,6 +65,22 @@ func (m *MemoryUserStore) GetUserByID(ctx context.Context, id string) (*User, er
 		return nil, ErrNotFound
 	}
 	return cloneUser(u), nil
+}
+
+func (m *MemoryUserStore) ListUsers(ctx context.Context) ([]*User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ids := make([]string, 0, len(m.byID))
+	for id := range m.byID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	users := make([]*User, 0, len(ids))
+	for _, id := range ids {
+		users = append(users, cloneUser(m.byID[id]))
+	}
+	return users, nil
 }
 
 // MemorySessionStore is an in-memory SessionStore for tests.

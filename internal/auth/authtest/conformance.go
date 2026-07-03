@@ -68,6 +68,40 @@ func RunUserStore(t *testing.T, newStore func(t *testing.T) auth.UserStore) {
 			t.Fatalf("GetUserByEmail normalised: %v", err)
 		}
 	})
+
+	t.Run("ListUsers", func(t *testing.T) {
+		st := newStore(t)
+		empty, err := st.ListUsers(ctx)
+		if err != nil {
+			t.Fatalf("ListUsers empty: %v", err)
+		}
+		if len(empty) != 0 {
+			t.Fatalf("ListUsers empty returned %d users", len(empty))
+		}
+
+		alice, err := st.CreateUser(ctx, "alice@example.com", "hash1")
+		if err != nil {
+			t.Fatalf("CreateUser alice: %v", err)
+		}
+		bob, err := st.CreateUser(ctx, "bob@example.com", "hash2")
+		if err != nil {
+			t.Fatalf("CreateUser bob: %v", err)
+		}
+		users, err := st.ListUsers(ctx)
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		if len(users) != 2 {
+			t.Fatalf("ListUsers count = %d, want 2", len(users))
+		}
+		got := map[string]string{}
+		for _, u := range users {
+			got[u.ID] = u.Email
+		}
+		if got[alice.ID] != "alice@example.com" || got[bob.ID] != "bob@example.com" {
+			t.Fatalf("ListUsers mismatch: %+v", users)
+		}
+	})
 }
 
 // RunSessionStore exercises the auth.SessionStore contract against a fresh store.

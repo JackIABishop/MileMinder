@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -128,6 +129,23 @@ func (s *UserStore) GetUserByID(ctx context.Context, id string) (*auth.User, err
 		}
 	}
 	return nil, auth.ErrNotFound
+}
+
+func (s *UserStore) ListUsers(ctx context.Context) ([]*auth.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	users, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*auth.User, 0, len(users))
+	for _, u := range users {
+		cp := *u
+		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 // SessionStore is a file-backed auth.SessionStore.

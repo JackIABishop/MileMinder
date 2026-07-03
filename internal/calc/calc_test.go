@@ -266,6 +266,70 @@ func TestComputeStatus_PlainEdgeCases(t *testing.T) {
 	}
 }
 
+func TestEvaluateBreach(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    Status
+		threshold float64
+		want      Breach
+	}{
+		{
+			name:      "plain vehicle never breaches",
+			status:    Status{HasPlan: false, Delta: 1, PercentUsed: 150, ProjectedOver: true},
+			threshold: 100,
+			want:      Breach{},
+		},
+		{
+			name:      "ok below threshold",
+			status:    Status{HasPlan: true, PercentUsed: 51},
+			threshold: 100,
+			want:      Breach{},
+		},
+		{
+			name:      "positive delta",
+			status:    Status{HasPlan: true, Delta: 1, PercentUsed: 90},
+			threshold: 100,
+			want:      Breach{Over: true},
+		},
+		{
+			name:      "threshold boundary",
+			status:    Status{HasPlan: true, PercentUsed: 100},
+			threshold: 100,
+			want:      Breach{ThresholdHit: true},
+		},
+		{
+			name:      "custom threshold",
+			status:    Status{HasPlan: true, PercentUsed: 80},
+			threshold: 75,
+			want:      Breach{ThresholdHit: true},
+		},
+		{
+			name:      "projected over",
+			status:    Status{HasPlan: true, PercentUsed: 75, ProjectedOver: true},
+			threshold: 100,
+			want:      Breach{ProjectedOver: true},
+		},
+		{
+			name:      "all reasons",
+			status:    Status{HasPlan: true, Delta: 1, PercentUsed: 125, ProjectedOver: true},
+			threshold: 100,
+			want:      Breach{Over: true, ThresholdHit: true, ProjectedOver: true},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EvaluateBreach(tt.status, tt.threshold)
+			if got != tt.want {
+				t.Fatalf("EvaluateBreach() = %+v, want %+v", got, tt.want)
+			}
+			if got.Breached() != (tt.want.Over || tt.want.ThresholdHit || tt.want.ProjectedOver) {
+				t.Fatalf("Breached() mismatch for %+v", got)
+			}
+		})
+	}
+}
+
 func TestAllowanceMiles(t *testing.T) {
 	start := date("2025-01-01")
 	if got := AllowanceMiles(10000, start, start); got != 0 {
