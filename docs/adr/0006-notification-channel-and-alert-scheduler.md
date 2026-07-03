@@ -25,8 +25,9 @@ hosted infrastructure.
   injected clock.
 - Persist alert preferences and edge state in hosted-root YAML files:
   `alert_prefs.yml` and `alerts_state.yml`.
-- Send only on OK-to-breached crossings. First observation seeds state silently
-  so enabling alerts on existing hosted data does not cause a burst.
+- Send only on OK-to-breached crossings. First observation of each user/vehicle
+  pair seeds state silently, so enabling alerts on existing hosted data, or
+  adding a vehicle that is already breached, does not cause an immediate email.
 - Put the reusable breach predicate in `internal/calc` so CLI and hosted alerts
   agree.
 
@@ -43,8 +44,8 @@ hosted infrastructure.
 ## Consequences
 
 - Single-user mode and the offline CLI stay unchanged.
-- Existing already-breached hosted vehicles are not emailed until they clear and
-  breach again.
+- Already-breached vehicles are not emailed the first time the scheduler sees
+  them. That includes vehicles added later; they must clear and breach again.
 - SMTP secrets live only in environment variables, never in files or flags.
 - APNs can be added as a sibling `notify.Channel` implementation later without
   changing alert rendering or scheduler state.

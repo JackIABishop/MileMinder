@@ -103,6 +103,8 @@ func (s *Scheduler) runVehicle(ctx context.Context, u *auth.User, prefs *Prefs, 
 
 	prev, err := s.State.GetState(ctx, u.ID, rec.ID)
 	if errors.Is(err, ErrNotFound) {
+		// First observation is a baseline for this user/vehicle pair, not a
+		// crossing. This also applies to vehicles added later already breached.
 		if err := s.State.PutState(ctx, VehicleAlertState{UserID: u.ID, VehicleID: rec.ID, Breached: isBreached}); err != nil {
 			s.logf("alerts: seed state for user %s vehicle %s: %v", u.ID, rec.ID, err)
 		}
