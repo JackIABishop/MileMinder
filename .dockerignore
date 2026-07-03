@@ -1,0 +1,18 @@
+# Node / web build artifacts — the embedded copy at internal/web/dist is what
+# gets baked in, and it's tracked, so the raw web/ build outputs aren't needed.
+web/node_modules
+web/dist
+web/.svelte-kit
+
+# Compiled binary (built inside the image instead).
+mileminder
+
+# VCS and tooling.
+.git
+.gitignore
+.claude
+.codex
+worktrees
+
+# Archives / backups.
+*.tar.gz

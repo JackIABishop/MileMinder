@@ -1,0 +1,41 @@
+# Fly.io deployment config for MileMinder in hosted (multi-user) mode.
+#
+# SMTP credentials are NOT stored here — set them at deploy time with:
+#   fly secrets set MILEMINDER_SMTP_HOST=... MILEMINDER_SMTP_PORT=... \
+#                   MILEMINDER_SMTP_USER=... MILEMINDER_SMTP_PASS=... \
+#                   MILEMINDER_SMTP_FROM=...
+#
+# Update `app` and `primary_region` for your account before the first deploy.
+app = "mileminder"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Non-secret config. The image already defaults to --hosted --data-dir /data,
+# but these make the mode explicit and independent of the CMD.
+[env]
+  MILEMINDER_HOSTED = "1"
+  MILEMINDER_DATA_DIR = "/data"
+
+# Persistent volume for the YAML data store, users, sessions and alert state.
+# Create it once with: fly volumes create mileminder_data --size 1 --region lhr
+[[mounts]]
+  source = "mileminder_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  # Fly-managed TLS terminates at the edge and forwards plain HTTP to the app,
+  # so the app's own secure-cookies default (true) is correct here.
+  [[http_service.checks]]
+    method = "GET"
+    path = "/api/v1/meta"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "5s"
