@@ -98,6 +98,7 @@ func hostedHandler(cmd *cobra.Command, devMode bool, url string) (http.Handler, 
 		Sessions:      filestore.NewSessionStore(dataDir),
 		Tenants:       tenants,
 		Notifier:      channel,
+		AlertPrefs:    alertPrefs,
 		SecureCookies: secure,
 	}
 
