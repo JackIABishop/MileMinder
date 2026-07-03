@@ -29,7 +29,10 @@ primary_region = "lhr"
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 0
+  # Keep one machine always up: the hosted alert scheduler is a background
+  # interval goroutine, and Fly only wakes idle machines on incoming HTTP —
+  # so a scaled-to-zero machine would never fire scheduled breach alerts.
+  min_machines_running = 1
 
   # Fly-managed TLS terminates at the edge and forwards plain HTTP to the app,
   # so the app's own secure-cookies default (true) is correct here.
