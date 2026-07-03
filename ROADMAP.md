@@ -78,6 +78,12 @@ items are unlocked by the phases above.
 
 ### High value, moderate effort
 - **CSV / manual import** — bulk-add historical readings (export already exists). New endpoint + CLI flag.
+- **Two-car mileage comparison graph (#38)** — compare actual mileage between two selected
+  vehicles on the same chart. Plot miles driven since each plan start, not raw
+  odometer values, so cars with different starting mileage are comparable. Useful
+  for spotting which car is accumulating mileage faster and whether a household
+  should rebalance trips between vehicles. Likely web-first: vehicle selector +
+  normalized graph series; CLI can follow with a compact ASCII comparison.
 - **Scenario / what-if** — "if I take a 600-mi trip next month, where do I land?" Read-only projection overlay.
 - **PWA + mobile quick-add** — installable web app, one-tap "add today's reading." Manifest + service worker + fast-add UI. (Interim before the native app.)
 - **Pace-breach alerts (CLI-first)** — `mileminder check` with a cron-friendly exit code, before any delivery channel exists. Becomes Phase 4 once a channel lands.
@@ -86,6 +92,14 @@ items are unlocked by the phases above.
 ### Worthwhile but touches the data model
 - **Reading metadata** — optional note/source/tag per reading ("MOT", "service", "manual"). `Readings` value goes `int → struct`; touches *both* persistence copies (`cmd/` + `internal/api/`), API, and web. Cheaper to do after Phase 1.
 - **Per-car identity** — colour / label / icon in the UI. Small, but needs a prefs field on the vehicle.
+- **Regional units + currency for overage rates (#39)** — today's `excess_rate` is
+  implicitly pence per mile, which is right for UK PCP/lease plans but not for
+  other markets. Model the charge as minor units plus a currency code (for
+  example GBP pence, EUR cents, USD cents) and make labels/formatting locale
+  aware. Keep the distance unit explicit too: miles remain the default, but the
+  data model should not make "pence per mile" the permanent global assumption.
+  Migration path: treat existing `excess_rate` values as GBP pence/mile unless a
+  vehicle or user preference says otherwise.
 
 ### Big swings — gated on the rearchitecture
 - **Auth + multi-user / hosted mode** — Phase 2/3. The fork that turns this from a local tool into a service.
