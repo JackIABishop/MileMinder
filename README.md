@@ -112,7 +112,7 @@ Both CLI and Web UI read/write to the same files, so changes sync automatically.
 
 ### Prerequisites
 - Go 1.22+
-- Node.js 18+ and npm
+- Node.js 20+ and npm
 
 ### Development Mode
 Run the API server and web dev server separately for hot reloading:

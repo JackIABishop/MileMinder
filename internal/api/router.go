@@ -3,10 +3,19 @@ package api
 import (
 	"encoding/json"
 	"io/fs"
+	"mime"
 	"net/http"
+	"path/filepath"
 
 	"github.com/jackiabishop/mileminder/internal/storage"
 )
+
+func init() {
+	// Go's mime package has no built-in mapping for .webmanifest, so it falls
+	// back to content sniffing and serves it as text/plain. Register the
+	// correct type so the web app manifest is served as the browsers expect.
+	mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
 
 // Server mode, reported at GET /api/v1/meta so one SPA build can serve both:
 // single-user hides all auth UI; hosted shows login and gates data on a session.
@@ -98,8 +107,15 @@ type spaHandlerDir struct {
 func (h spaHandlerDir) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Check if file exists
 	if _, err := http.Dir(h.staticDir).Open(r.URL.Path); err != nil {
-		// File doesn't exist, serve index.html for SPA routing
-		r.URL.Path = "/"
+		// File doesn't exist: serve index.html directly for client-side routing,
+		// rather than rewriting r.URL.Path and delegating to the generic file
+		// server. net/http's serveFile 301-redirects to "./" whenever the
+		// *request's* URL path ends in "/index.html" (to canonicalize direct
+		// index.html requests) — rewriting the path would spuriously trigger
+		// that for every unknown route (e.g. a fresh navigation to /quick-add),
+		// bouncing it back to "/" instead of serving the SPA shell.
+		http.ServeFile(w, r, filepath.Join(h.staticDir, "index.html"))
+		return
 	}
 	h.fileServer.ServeHTTP(w, r)
 }
@@ -120,8 +136,11 @@ func (h spaHandlerFS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := fs.Stat(h.staticFS, path); err != nil {
-		// File doesn't exist, serve index.html for SPA routing
-		r.URL.Path = "/index.html"
+		// File doesn't exist: serve index.html directly (see the identical
+		// comment in spaHandlerDir for why we don't rewrite r.URL.Path and
+		// delegate to the generic file server here).
+		http.ServeFileFS(w, r, h.staticFS, "index.html")
+		return
 	}
 	h.fileServer.ServeHTTP(w, r)
 }
