@@ -5,6 +5,7 @@
 	import { onMount } from 'svelte';
 	import { listVehicles, getCurrentVehicle, setCurrentVehicle, type VehicleListItem } from '$lib/api';
 	import { initAuth, mode, user, authReady } from '$lib/auth';
+	import { loadSettings } from '$lib/settings';
 
 	let vehicles: VehicleListItem[] = [];
 	let currentVehicle: string = '';
@@ -24,7 +25,10 @@
 			goto('/login');
 			return;
 		}
-		if (!needsLogin) await loadVehicles();
+		if (!needsLogin) {
+			loadSettings();
+			await loadVehicles();
+		}
 	});
 
 	async function loadVehicles() {
@@ -89,7 +93,7 @@
 			</div>
 			<div class="min-w-0">
 				<p class="font-display text-base font-bold text-carbon-100">MileMinder</p>
-				<p class="truncate text-xs text-carbon-500">{currentVehicleData?.vehicle || currentVehicle || 'Select vehicle'}</p>
+				<p class="truncate text-xs text-carbon-500">{currentVehicleData?.vehicle || currentVehicle || 'Select vehicle'}{currentVehicleData?.registration ? ` · ${currentVehicleData.registration}` : ''}</p>
 			</div>
 		</div>
 		<button
@@ -151,7 +155,7 @@
 							</div>
 							<div class="min-w-0 text-left">
 								<p class="truncate text-sm font-medium text-carbon-100">{currentVehicleData?.vehicle || currentVehicle || 'Select vehicle'}</p>
-								<p class="truncate text-xs text-carbon-500">{currentVehicle}</p>
+								<p class="truncate text-xs text-carbon-500">{currentVehicleData?.registration || currentVehicle}</p>
 							</div>
 						</div>
 						<svg class="h-4 w-4 shrink-0 text-carbon-400 transition-transform" class:rotate-180={showVehicleMenu} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -167,7 +171,7 @@
 									class:text-accent-primary={vehicle.id === currentVehicle}
 									on:click|stopPropagation={() => switchVehicle(vehicle.id)}
 								>
-									<span class="min-w-0 truncate">{vehicle.vehicle || vehicle.id}</span>
+									<span class="min-w-0 truncate">{vehicle.vehicle || vehicle.id}{#if vehicle.registration}<span class="text-carbon-500"> · {vehicle.registration}</span>{/if}</span>
 									{#if vehicle.id === currentVehicle}
 										<svg class="h-4 w-4 shrink-0" fill="currentColor" viewBox="0 0 24 24">
 											<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
@@ -256,7 +260,7 @@
 					</div>
 					<div class="text-left">
 						<p class="text-sm font-medium text-carbon-100">{currentVehicleData?.vehicle || currentVehicle || 'Select vehicle'}</p>
-						<p class="text-xs text-carbon-500">{currentVehicle}</p>
+						<p class="text-xs text-carbon-500">{currentVehicleData?.registration || currentVehicle}</p>
 					</div>
 				</div>
 				<svg class="w-4 h-4 text-carbon-400 transition-transform" class:rotate-180={showVehicleMenu} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -272,7 +276,7 @@
 							class:text-accent-primary={vehicle.id === currentVehicle}
 							on:click|stopPropagation={() => switchVehicle(vehicle.id)}
 						>
-							<span>{vehicle.vehicle || vehicle.id}</span>
+							<span>{vehicle.vehicle || vehicle.id}{#if vehicle.registration}<span class="text-carbon-500"> · {vehicle.registration}</span>{/if}</span>
 							{#if vehicle.id === currentVehicle}
 								<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
 									<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>

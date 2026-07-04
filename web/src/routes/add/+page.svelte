@@ -91,6 +91,9 @@
 				<div class="text-left sm:text-right">
 					<p class="text-sm text-carbon-400">Vehicle</p>
 					<p class="text-lg font-medium text-carbon-100">{status.vehicle || status.id}</p>
+					{#if status.registration}
+						<p class="text-sm text-carbon-500">{status.registration}</p>
+					{/if}
 				</div>
 			</div>
 		</div>

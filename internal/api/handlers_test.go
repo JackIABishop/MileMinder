@@ -181,7 +181,7 @@ func TestCreateVehicleDecimalExcessRateRejectedCleanly(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Error.Code != "invalid_excess_rate" || body.Error.Message != "excess_rate must be a whole number of pence" {
+	if body.Error.Code != "invalid_excess_rate" || body.Error.Message != "excess_rate must be a whole number of currency minor units (e.g. pence, cents)" {
 		t.Fatalf("unexpected error body: %+v", body)
 	}
 }

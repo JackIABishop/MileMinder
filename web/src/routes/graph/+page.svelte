@@ -125,7 +125,8 @@
 	}
 
 	function displayName(status: VehicleStatus): string {
-		return status.vehicle || status.id;
+		const name = status.vehicle || status.id;
+		return status.registration ? `${name} (${status.registration})` : name;
 	}
 
 	function setCompareDefaults(preferredID = '') {

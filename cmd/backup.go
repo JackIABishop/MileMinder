@@ -135,7 +135,10 @@ func backupFiles(srcDir string) ([]string, error) {
 		}
 
 		name := entry.Name()
-		if name == "current" || filepath.Ext(name) == ".yml" {
+		// "current" and "settings" are the two extensionless store documents
+		// (default-vehicle pointer, user preferences); everything else is a
+		// per-vehicle <id>.yml.
+		if name == "current" || name == "settings" || filepath.Ext(name) == ".yml" {
 			files = append(files, name)
 		}
 	}

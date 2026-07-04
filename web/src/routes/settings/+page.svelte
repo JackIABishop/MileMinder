@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, importCSV, changePassword, getProfileExportURL, type VehicleListItem, type VehicleStatus, type VehicleProfile } from '$lib/api';
+	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, updateSettings, importCSV, changePassword, getProfileExportURL, type VehicleListItem, type VehicleStatus, type VehicleProfile } from '$lib/api';
 	import { mode, user, logout } from '$lib/auth';
+	import { settings } from '$lib/settings';
+	import { SUPPORTED_CURRENCIES, minorUnitLabel } from '$lib/money';
 
 	async function handleLogout() {
 		await logout();
@@ -44,6 +46,7 @@
 	let newVehicle = {
 		id: '',
 		vehicle: '',
+		registration: '',
 		has_plan: true,
 		start_date: '',
 		end_date: '',
@@ -91,6 +94,32 @@
 			error = e instanceof Error ? e.message : 'Failed to update alert preferences';
 		} finally {
 			savingAlerts = false;
+		}
+	}
+
+	// Currency preference. The select binds to a local copy so an in-flight
+	// save can't fight the global store; the store updates on success. The
+	// local copy re-syncs whenever the store value changes (the boot fetch can
+	// land after this page mounts) without clobbering an unsaved user edit.
+	let currencyChoice = $settings.currency;
+	let lastStoreCurrency = $settings.currency;
+	let savingCurrency = false;
+	$: if ($settings.currency !== lastStoreCurrency) {
+		lastStoreCurrency = $settings.currency;
+		currencyChoice = $settings.currency;
+	}
+
+	async function handleSaveCurrency() {
+		savingCurrency = true;
+		error = '';
+		try {
+			const saved = await updateSettings({ currency: currencyChoice });
+			settings.set(saved);
+			success = 'Currency updated.';
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to update currency';
+		} finally {
+			savingCurrency = false;
 		}
 	}
 
@@ -242,6 +271,9 @@
 			id: requireString(value.id, 'id'),
 			vehicle: typeof value.vehicle === 'string' ? value.vehicle : ''
 		};
+		if (value.registration !== undefined) {
+			profile.registration = requireString(value.registration, 'registration');
+		}
 
 		if (value.plan !== undefined) {
 			if (!isObject(value.plan)) {
@@ -273,6 +305,7 @@
 			newVehicle = {
 				id: profile.id,
 				vehicle: profile.vehicle || profile.id,
+				registration: profile.registration ?? '',
 				has_plan: !!profile.plan,
 				start_date: profile.plan?.start ?? '',
 				end_date: profile.plan?.end ?? '',
@@ -303,6 +336,7 @@
 			const payload = {
 				id: newVehicle.id.toLowerCase().replace(/\s+/g, '_'),
 				vehicle: newVehicle.vehicle || newVehicle.id,
+				registration: newVehicle.registration.trim() || undefined,
 				start_miles: newVehicle.start_miles,
 				start_date: newVehicle.start_date || undefined
 			};
@@ -334,6 +368,7 @@
 			newVehicle = {
 				id: '',
 				vehicle: '',
+				registration: '',
 				has_plan: true,
 				start_date: '',
 				end_date: '',
@@ -349,6 +384,44 @@
 		}
 	}
 
+	// Edit details (#40): display name + registration on an existing vehicle.
+	let showEditForm: Record<string, boolean> = {};
+	let editForms: Record<string, { vehicle: string; registration: string }> = {};
+	let savingEdit: Record<string, boolean> = {};
+
+	function toggleEditForm(id: string) {
+		showEditForm = { ...showEditForm, [id]: !showEditForm[id] };
+		if (showEditForm[id]) {
+			editForms = {
+				...editForms,
+				[id]: {
+					vehicle: vehicles.find((v) => v.id === id)?.vehicle ?? '',
+					registration: vehicleStatuses[id]?.registration ?? ''
+				}
+			};
+		}
+	}
+
+	async function handleSaveDetails(id: string) {
+		const form = editForms[id];
+		if (!form) return;
+		savingEdit = { ...savingEdit, [id]: true };
+		error = '';
+		try {
+			await updatePlan(id, {
+				vehicle: form.vehicle.trim() || id,
+				registration: form.registration.trim()
+			});
+			success = `Details updated for ${id}.`;
+			showEditForm = { ...showEditForm, [id]: false };
+			await loadVehicles();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to update details';
+		} finally {
+			savingEdit = { ...savingEdit, [id]: false };
+		}
+	}
+
 	function resetForm() {
 		showAddForm = false;
 		error = '';
@@ -357,6 +430,7 @@
 		newVehicle = {
 			id: '',
 			vehicle: '',
+			registration: '',
 			has_plan: true,
 			start_date: '',
 			end_date: '',
@@ -478,6 +552,36 @@
 		</section>
 	{/if}
 
+	<!-- Preferences Section -->
+	<section class="mb-8">
+		<h2 class="text-xl font-semibold text-carbon-100 mb-4">Preferences</h2>
+		<div class="p-4 bg-carbon-900/40 border border-carbon-800 rounded-xl">
+			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+				<div>
+					<label for="currency" class="label">Currency</label>
+					<select id="currency" bind:value={currencyChoice} class="input">
+						{#each SUPPORTED_CURRENCIES as c}
+							<option value={c.code}>{c.label}</option>
+						{/each}
+					</select>
+					<p class="text-xs text-carbon-500 mt-1">
+						Excess rates are entered in {minorUnitLabel(currencyChoice)}; overage costs display in this currency.
+					</p>
+				</div>
+				<div>
+					<span class="label">Distance unit</span>
+					<p class="input bg-carbon-900/60 text-carbon-400 cursor-default select-none">Miles</p>
+					<p class="text-xs text-carbon-500 mt-1">Kilometre support is planned.</p>
+				</div>
+			</div>
+			<div class="mt-4 flex justify-stretch sm:justify-end">
+				<button class="btn-secondary" on:click={handleSaveCurrency} disabled={savingCurrency || currencyChoice === $settings.currency}>
+					{savingCurrency ? 'Saving...' : 'Save'}
+				</button>
+			</div>
+		</div>
+	</section>
+
 	<!-- Vehicles Section -->
 	<section class="mb-8">
 		<div class="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -511,10 +615,13 @@
 									</div>
 									<div class="min-w-0">
 										<p class="truncate font-medium text-carbon-100">{vehicle.vehicle || vehicle.id}</p>
-										<p class="truncate text-sm text-carbon-500">{vehicle.id}</p>
+										<p class="truncate text-sm text-carbon-500">{vehicleStatuses[vehicle.id]?.registration ? `${vehicleStatuses[vehicle.id].registration} · ${vehicle.id}` : vehicle.id}</p>
 									</div>
 								</div>
 								<div class="flex items-center gap-2">
+									<button class="btn-secondary text-sm" on:click={() => toggleEditForm(vehicle.id)}>
+										{showEditForm[vehicle.id] ? 'Cancel' : 'Edit details'}
+									</button>
 									<a
 										href={getProfileExportURL(vehicle.id)}
 										download="{vehicle.id}_profile.json"
@@ -530,11 +637,29 @@
 								</div>
 							</div>
 
+							{#if showEditForm[vehicle.id] && editForms[vehicle.id]}
+								<form on:submit|preventDefault={() => handleSaveDetails(vehicle.id)} class="mt-4 pt-4 border-t border-carbon-800 space-y-4">
+									<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+										<div>
+											<label for="editName-{vehicle.id}" class="label">Display Name</label>
+											<input id="editName-{vehicle.id}" type="text" bind:value={editForms[vehicle.id].vehicle} class="input" placeholder={vehicle.id} />
+										</div>
+										<div>
+											<label for="editReg-{vehicle.id}" class="label">Registration</label>
+											<input id="editReg-{vehicle.id}" type="text" bind:value={editForms[vehicle.id].registration} class="input" placeholder="e.g., AB12 CDE" />
+										</div>
+									</div>
+									<button type="submit" class="btn-primary" disabled={savingEdit[vehicle.id]}>
+										{savingEdit[vehicle.id] ? 'Saving...' : 'Save details'}
+									</button>
+								</form>
+							{/if}
+
 							{#if vehicleStatuses[vehicle.id]?.has_plan}
 								<!-- Excess-rate editor (#5): settable on existing policy vehicles -->
 								<div class="mt-4 pt-4 border-t border-carbon-800 flex flex-col gap-3 sm:flex-row sm:items-end">
 									<div class="flex-1">
-										<label for="rate-{vehicle.id}" class="label">Excess Rate (pence per mile over)</label>
+										<label for="rate-{vehicle.id}" class="label">Excess Rate ({minorUnitLabel($settings.currency)} per mile over)</label>
 										<input
 											type="number"
 											id="rate-{vehicle.id}"
@@ -584,7 +709,7 @@
 												</div>
 											</div>
 											<div>
-												<label for="planRate-{vehicle.id}" class="label">Excess Rate (pence per mile over)</label>
+												<label for="planRate-{vehicle.id}" class="label">Excess Rate ({minorUnitLabel($settings.currency)} per mile over)</label>
 												<input id="planRate-{vehicle.id}" type="number" bind:value={planForms[vehicle.id].excess_rate} class="input font-mono" min="0" step="1" />
 											</div>
 											<button type="submit" class="btn-primary" disabled={savingPlan[vehicle.id]}>
@@ -664,6 +789,17 @@
 									class="input"
 								/>
 							</div>
+							<div>
+								<label for="vehicleReg" class="label">Registration</label>
+								<input
+									type="text"
+									id="vehicleReg"
+									bind:value={newVehicle.registration}
+									placeholder="e.g., AB12 CDE"
+									class="input"
+								/>
+								<p class="text-xs text-carbon-500 mt-1">Optional — shown alongside the name to tell similar cars apart</p>
+							</div>
 						</div>
 
 						<label class="flex items-center gap-3 p-4 bg-carbon-900/40 border border-carbon-800 rounded-lg">
@@ -737,7 +873,7 @@
 
 						{#if newVehicle.has_plan}
 							<div>
-								<label for="excessRate" class="label">Excess Rate (pence per mile over)</label>
+								<label for="excessRate" class="label">Excess Rate ({minorUnitLabel($settings.currency)} per mile over)</label>
 								<input
 									type="number"
 									id="excessRate"
