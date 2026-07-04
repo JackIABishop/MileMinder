@@ -2,21 +2,32 @@
 	import '../app.css';
 	import { page } from '$app/stores';
 	import { afterNavigate, goto } from '$app/navigation';
+	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import { listVehicles, getCurrentVehicle, setCurrentVehicle, type VehicleListItem } from '$lib/api';
 	import { initAuth, mode, user, authReady } from '$lib/auth';
+
+	if (browser) {
+		// Registers the generated service worker so the app shell is cached for
+		// instant repeat loads. No-op in dev (devOptions.enabled: false).
+		import('virtual:pwa-register/svelte').then(({ useRegisterSW }) => useRegisterSW());
+	}
 
 	let vehicles: VehicleListItem[] = [];
 	let currentVehicle: string = '';
 	let showVehicleMenu = false;
 	let mobileDrawerOpen = false;
 	const authRoutes = new Set(['/login', '/forgot', '/reset']);
+	// Quick-add is a fast one-tap entry form (reachable from the PWA home-screen
+	// icon/shortcut) and stays auth-gated but skips the sidebar/header chrome.
+	const bareRoutes = new Set(['/quick-add']);
 
 	// Auth pages render bare (no sidebar). In hosted mode an unauthenticated
 	// visitor is bounced to login; single-user mode never shows any of this.
 	$: isAuthRoute = authRoutes.has($page.url.pathname);
+	$: isBareRoute = bareRoutes.has($page.url.pathname);
 	$: needsLogin = $mode === 'hosted' && !$user;
-	$: showChrome = $authReady && !isAuthRoute && !needsLogin;
+	$: showChrome = $authReady && !isAuthRoute && !isBareRoute && !needsLogin;
 
 	onMount(async () => {
 		await initAuth();
@@ -77,6 +88,8 @@
 	<div class="min-h-screen flex items-center justify-center text-carbon-500">Loading…</div>
 {:else if needsLogin}
 	<div class="min-h-screen flex items-center justify-center text-carbon-500">Redirecting to sign in…</div>
+{:else if isBareRoute}
+	<slot />
 {:else}
 <div class="min-h-screen overflow-x-hidden md:flex">
 	<!-- Mobile Header -->
