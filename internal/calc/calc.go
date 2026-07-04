@@ -51,13 +51,16 @@ type Status struct {
 	// figure (remaining allowed miles ÷ remaining days), not a pace projection.
 	DrivableDailyRate float64 `json:"drivable_daily_rate"`
 
-	// Overage cost estimate (#5). ExcessRate mirrors plan.ExcessRate (pence per
-	// excess mile). ProjectedExcessMiles is how far the projected final mileage
-	// exceeds the total term allowance; ProjectedOverageCost is the £ penalty,
-	// populated only when an excess rate is set.
-	ExcessRate           int     `json:"excess_rate,omitempty"`
-	ProjectedExcessMiles float64 `json:"projected_excess_miles"`
-	ProjectedOverageCost float64 `json:"projected_overage_cost"`
+	// Overage cost estimate (#5). ExcessRate mirrors plan.ExcessRate (currency
+	// minor units — e.g. pence, cents — per excess mile; which currency is a
+	// user-level setting the calculator never sees). ProjectedExcessMiles is how
+	// far the projected final mileage exceeds the total term allowance;
+	// ProjectedOverageCostMinor is the penalty in the same minor units,
+	// populated only when an excess rate is set. Clients convert to major units
+	// and format; calc stays currency-blind.
+	ExcessRate                int     `json:"excess_rate,omitempty"`
+	ProjectedExcessMiles      float64 `json:"projected_excess_miles"`
+	ProjectedOverageCostMinor float64 `json:"projected_overage_cost_minor"`
 
 	// Trend signal (#7): recent (90-day) annual pace vs lifetime average.
 	// PaceTrend classifies the delta as accelerating / easing / steady.
@@ -394,15 +397,17 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 	}
 
 	// Overage cost estimate (#5): how far the projected final mileage overshoots
-	// the total term allowance, and the £ penalty at the plan's excess rate.
+	// the total term allowance, and the penalty at the plan's excess rate. Rate
+	// and cost are both in currency minor units; conversion to major units is a
+	// client/display concern.
 	projectedMilesDriven := estimatedFinalMileage - float64(plan.StartMiles)
 	projectedExcessMiles := projectedMilesDriven - totalTermAllowanceMiles
 	if projectedExcessMiles < 0 {
 		projectedExcessMiles = 0
 	}
-	projectedOverageCost := 0.0
+	projectedOverageCostMinor := 0.0
 	if plan.ExcessRate > 0 {
-		projectedOverageCost = projectedExcessMiles * float64(plan.ExcessRate) / 100.0
+		projectedOverageCostMinor = projectedExcessMiles * float64(plan.ExcessRate)
 	}
 
 	// Trend signal (#7): recent 90-day annual pace vs the lifetime average.
@@ -441,13 +446,13 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 		AnnualAllowance:     plan.AnnualAllowance,
 		StartMiles:          plan.StartMiles,
 
-		DaysToEnd:             daysToEnd,
-		EstimatedFinalMileage: estimatedFinalMileage,
-		DrivableDailyRate:     drivableDailyRate,
-		ExcessRate:            plan.ExcessRate,
-		ProjectedExcessMiles:  projectedExcessMiles,
-		ProjectedOverageCost:  projectedOverageCost,
-		PaceTrendDelta:        paceTrendDelta,
-		PaceTrend:             paceTrend,
+		DaysToEnd:                 daysToEnd,
+		EstimatedFinalMileage:     estimatedFinalMileage,
+		DrivableDailyRate:         drivableDailyRate,
+		ExcessRate:                plan.ExcessRate,
+		ProjectedExcessMiles:      projectedExcessMiles,
+		ProjectedOverageCostMinor: projectedOverageCostMinor,
+		PaceTrendDelta:            paceTrendDelta,
+		PaceTrend:                 paceTrend,
 	}
 }

@@ -56,20 +56,20 @@ func writeValidationErrorDetails(w http.ResponseWriter, code, message string, de
 	})
 }
 
-type wholePence int
+type wholeMinorUnit int
 
-func (p *wholePence) UnmarshalJSON(b []byte) error {
+func (p *wholeMinorUnit) UnmarshalJSON(b []byte) error {
 	if string(b) == "null" {
 		return nil
 	}
 	f, err := strconv.ParseFloat(string(b), 64)
 	if err != nil {
-		return errors.New("excess_rate must be a whole number of pence")
+		return errors.New("excess_rate must be a whole number of currency minor units (e.g. pence, cents)")
 	}
 	if math.IsNaN(f) || math.IsInf(f, 0) || math.Trunc(f) != f {
-		return errors.New("excess_rate must be a whole number of pence")
+		return errors.New("excess_rate must be a whole number of currency minor units (e.g. pence, cents)")
 	}
-	*p = wholePence(f)
+	*p = wholeMinorUnit(f)
 	return nil
 }
 
@@ -225,17 +225,17 @@ func (s *Server) HandleExportProfile(w http.ResponseWriter, r *http.Request) {
 // saving to avoid replacing a vehicle's plan and readings.
 func (s *Server) HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID              string     `json:"id"`
-		Vehicle         string     `json:"vehicle"`
-		StartDate       string     `json:"start_date"`
-		EndDate         string     `json:"end_date"`
-		AnnualAllowance *int       `json:"annual_allowance"`
-		StartMiles      int        `json:"start_miles"`
-		ExcessRate      wholePence `json:"excess_rate"`
+		ID              string         `json:"id"`
+		Vehicle         string         `json:"vehicle"`
+		StartDate       string         `json:"start_date"`
+		EndDate         string         `json:"end_date"`
+		AnnualAllowance *int           `json:"annual_allowance"`
+		StartMiles      int            `json:"start_miles"`
+		ExcessRate      wholeMinorUnit `json:"excess_rate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		if strings.Contains(err.Error(), "excess_rate") {
-			writeValidationError(w, "invalid_excess_rate", "excess_rate must be a whole number of pence")
+			writeValidationError(w, "invalid_excess_rate", "excess_rate must be a whole number of currency minor units (e.g. pence, cents)")
 		} else {
 			writeValidationError(w, "invalid_json", err.Error())
 		}
@@ -322,15 +322,15 @@ func (s *Server) HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
 	// Pointer fields so an omitted key leaves the existing value untouched
 	// (rather than zeroing it).
 	var req struct {
-		ExcessRate      *wholePence `json:"excess_rate"`
-		StartDate       *string     `json:"start_date"`
-		EndDate         *string     `json:"end_date"`
-		AnnualAllowance *int        `json:"annual_allowance"`
-		StartMiles      *int        `json:"start_miles"`
+		ExcessRate      *wholeMinorUnit `json:"excess_rate"`
+		StartDate       *string         `json:"start_date"`
+		EndDate         *string         `json:"end_date"`
+		AnnualAllowance *int            `json:"annual_allowance"`
+		StartMiles      *int            `json:"start_miles"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		if strings.Contains(err.Error(), "excess_rate") {
-			writeValidationError(w, "invalid_excess_rate", "excess_rate must be a whole number of pence")
+			writeValidationError(w, "invalid_excess_rate", "excess_rate must be a whole number of currency minor units (e.g. pence, cents)")
 		} else {
 			writeValidationError(w, "invalid_json", err.Error())
 		}

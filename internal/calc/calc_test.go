@@ -199,7 +199,7 @@ func TestComputeStatus_NewPlan(t *testing.T) {
 	}
 	for _, f := range []float64{
 		s.Delta, s.DailyRate, s.AvgAnnualMileage, s.RecentAnnualMileage, s.ProjectedEnd,
-		s.EstimatedFinalMileage, s.DrivableDailyRate, s.ProjectedExcessMiles, s.ProjectedOverageCost, s.PaceTrendDelta,
+		s.EstimatedFinalMileage, s.DrivableDailyRate, s.ProjectedExcessMiles, s.ProjectedOverageCostMinor, s.PaceTrendDelta,
 	} {
 		if math.IsNaN(f) || math.IsInf(f, 0) {
 			t.Errorf("non-finite value in new-plan status: %v", f)
@@ -234,7 +234,7 @@ func TestComputeStatus_PlainVehicle(t *testing.T) {
 	}
 	for _, f := range []float64{
 		s.TargetToday, s.Delta, s.PercentUsed, s.MilesLeftYear, s.MilesLeftTerm,
-		s.ProjectedEnd, s.EstimatedFinalMileage, s.DrivableDailyRate, s.ProjectedExcessMiles, s.ProjectedOverageCost,
+		s.ProjectedEnd, s.EstimatedFinalMileage, s.DrivableDailyRate, s.ProjectedExcessMiles, s.ProjectedOverageCostMinor,
 	} {
 		if f != 0 {
 			t.Errorf("plain allowance field not zero: %v", f)
@@ -561,14 +561,14 @@ func TestOverageCost(t *testing.T) {
 	if !almostEqual(unset.ProjectedExcessMiles, wantExcess) {
 		t.Errorf("ProjectedExcessMiles (unset) = %v, want %v", unset.ProjectedExcessMiles, wantExcess)
 	}
-	if unset.ProjectedOverageCost != 0 {
-		t.Errorf("ProjectedOverageCost (unset) = %v, want 0", unset.ProjectedOverageCost)
+	if unset.ProjectedOverageCostMinor != 0 {
+		t.Errorf("ProjectedOverageCostMinor (unset) = %v, want 0", unset.ProjectedOverageCostMinor)
 	}
 
-	set := computeStatus("set", mk(10), now) // 10 pence/excess mile
-	wantCost := wantExcess * 10.0 / 100.0
-	if !almostEqual(set.ProjectedOverageCost, wantCost) {
-		t.Errorf("ProjectedOverageCost (set) = %v, want %v", set.ProjectedOverageCost, wantCost)
+	set := computeStatus("set", mk(10), now) // 10 minor units/excess mile
+	wantCost := wantExcess * 10.0            // cost stays in minor units; clients convert
+	if !almostEqual(set.ProjectedOverageCostMinor, wantCost) {
+		t.Errorf("ProjectedOverageCostMinor (set) = %v, want %v", set.ProjectedOverageCostMinor, wantCost)
 	}
 }
 

@@ -9,7 +9,7 @@ type Plan struct {
 	End             time.Time `yaml:"end" json:"end"`
 	AnnualAllowance int       `yaml:"annual_allowance" json:"annual_allowance"`
 	StartMiles      int       `yaml:"start_miles" json:"start_miles"`
-	ExcessRate      int       `yaml:"excess_rate,omitempty" json:"excess_rate,omitempty"` // pence per excess mile
+	ExcessRate      int       `yaml:"excess_rate,omitempty" json:"excess_rate,omitempty"` // currency minor units (see Settings.Currency) per excess mile
 }
 
 type VehicleData struct {
