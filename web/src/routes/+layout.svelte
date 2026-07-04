@@ -5,6 +5,7 @@
 	import { onMount } from 'svelte';
 	import { listVehicles, getCurrentVehicle, setCurrentVehicle, type VehicleListItem } from '$lib/api';
 	import { initAuth, mode, user, authReady } from '$lib/auth';
+	import { loadSettings } from '$lib/settings';
 
 	let vehicles: VehicleListItem[] = [];
 	let currentVehicle: string = '';
@@ -24,7 +25,10 @@
 			goto('/login');
 			return;
 		}
-		if (!needsLogin) await loadVehicles();
+		if (!needsLogin) {
+			loadSettings();
+			await loadVehicles();
+		}
 	});
 
 	async function loadVehicles() {

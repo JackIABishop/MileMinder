@@ -43,9 +43,11 @@ export interface VehicleStatus {
 	drivable_daily_rate: number;
 	// Overage cost estimate (#5) — excess_rate omitted from JSON when 0 (no rate set);
 	// the projected figures are always present (cost is 0 without a rate).
+	// Rate and cost are in the minor unit of the user's currency (see Settings);
+	// format with formatMoneyMinor from lib/money.
 	excess_rate?: number;
 	projected_excess_miles: number;
-	projected_overage_cost: number;
+	projected_overage_cost_minor: number;
 	// Trend signal (#7)
 	pace_trend_delta: number;
 	pace_trend: string;
@@ -124,6 +126,13 @@ export interface AlertPrefs {
 	user_id: string;
 	enabled: boolean;
 	threshold: number;
+}
+
+// User-level preferences. Money fields across the API are stored in the minor
+// unit of `currency`; distance_unit is always "mi" today (km is future work).
+export interface Settings {
+	currency: string;
+	distance_unit: string;
 }
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
@@ -222,6 +231,18 @@ export async function setCurrentVehicle(id: string): Promise<{ status: string; c
 // Fleet
 export async function getFleet(): Promise<FleetResponse> {
 	return fetchJSON<FleetResponse>(`${API_BASE}/fleet`);
+}
+
+// User-level preferences
+export async function getSettings(): Promise<Settings> {
+	return fetchJSON<Settings>(`${API_BASE}/settings`);
+}
+
+export async function updateSettings(data: Partial<Settings>): Promise<Settings> {
+	return fetchJSON<Settings>(`${API_BASE}/settings`, {
+		method: 'PUT',
+		body: JSON.stringify(data)
+	});
 }
 
 // Hosted alert preferences

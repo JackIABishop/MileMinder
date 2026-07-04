@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { getCurrentVehicle, getVehicle, listVehicles, addReading, formatNumber, formatDate, getDeltaStatus, type VehicleStatus } from '$lib/api';
+	import { formatMoneyMinor } from '$lib/money';
+	import { settings } from '$lib/settings';
 	import Gauge from '$lib/components/Gauge.svelte';
 	import StatCard from '$lib/components/StatCard.svelte';
 	import QuickAdd from '$lib/components/QuickAdd.svelte';
@@ -281,14 +283,14 @@
 						<p class="text-sm text-carbon-400">Projected penalty over the full term</p>
 						<p class="text-xs text-carbon-500 mt-1">
 							{#if status.projected_excess_miles > 0}
-								{formatNumber(Math.round(status.projected_excess_miles))} mi over · {status.excess_rate}p/mile
+								{formatNumber(Math.round(status.projected_excess_miles))} mi over · {formatMoneyMinor(status.excess_rate ?? 0, $settings.currency)}/mile
 							{:else}
 								Within allowance at your current pace
 							{/if}
 						</p>
 					</div>
 					<p class="text-2xl font-mono {status.projected_excess_miles > 0 ? 'text-gauge-red' : 'text-gauge-green'}">
-						£{formatNumber(status.projected_overage_cost ?? 0, 2)}
+						{formatMoneyMinor(status.projected_overage_cost_minor ?? 0, $settings.currency)}
 					</p>
 				</div>
 			{/if}
