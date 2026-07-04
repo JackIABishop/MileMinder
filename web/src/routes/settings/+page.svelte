@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, importCSV, changePassword, type VehicleListItem, type VehicleStatus } from '$lib/api';
+	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, importCSV, changePassword, getProfileExportURL, type VehicleListItem, type VehicleStatus, type VehicleProfile } from '$lib/api';
 	import { mode, user, logout } from '$lib/auth';
 
 	async function handleLogout() {
@@ -40,6 +40,7 @@
 	// New vehicle form. historyFiles is the optional readings CSV imported
 	// right after creation (create-with-history composes the two API calls).
 	let historyFiles: FileList | null = null;
+	let importedProfileName = '';
 	let newVehicle = {
 		id: '',
 		vehicle: '',
@@ -50,6 +51,11 @@
 		start_miles: 0,
 		excess_rate: 0
 	};
+
+	$: normalizedNewVehicleId = newVehicle.id.toLowerCase().replace(/\s+/g, '_');
+	$: duplicateVehicleId = normalizedNewVehicleId
+		? vehicles.some((vehicle) => vehicle.id === normalizedNewVehicleId)
+		: false;
 
 	onMount(async () => {
 		await loadVehicles();
@@ -194,6 +200,96 @@
 		}
 	}
 
+	function isObject(value: unknown): value is Record<string, unknown> {
+		return typeof value === 'object' && value !== null && !Array.isArray(value);
+	}
+
+	function requireString(value: unknown, field: string): string {
+		if (typeof value !== 'string' || value.trim() === '') {
+			throw new Error(`${field} must be a non-empty string`);
+		}
+		return value;
+	}
+
+	function requireDate(value: unknown, field: string): string {
+		const date = requireString(value, field);
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+			throw new Error(`${field} must be a YYYY-MM-DD date`);
+		}
+		return date;
+	}
+
+	function requireNonNegativeInteger(value: unknown, field: string): number {
+		if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+			throw new Error(`${field} must be a non-negative integer`);
+		}
+		return value;
+	}
+
+	function requirePositiveInteger(value: unknown, field: string): number {
+		const valueNumber = requireNonNegativeInteger(value, field);
+		if (valueNumber <= 0) {
+			throw new Error(`${field} must be greater than 0`);
+		}
+		return valueNumber;
+	}
+
+	function parseVehicleProfile(value: unknown): VehicleProfile {
+		if (!isObject(value)) {
+			throw new Error('Profile JSON must be an object');
+		}
+		const profile: VehicleProfile = {
+			id: requireString(value.id, 'id'),
+			vehicle: typeof value.vehicle === 'string' ? value.vehicle : ''
+		};
+
+		if (value.plan !== undefined) {
+			if (!isObject(value.plan)) {
+				throw new Error('plan must be an object');
+			}
+			profile.plan = {
+				start: requireDate(value.plan.start, 'plan.start'),
+				end: requireDate(value.plan.end, 'plan.end'),
+				annual_allowance: requirePositiveInteger(value.plan.annual_allowance, 'plan.annual_allowance'),
+				start_miles: requireNonNegativeInteger(value.plan.start_miles, 'plan.start_miles'),
+				excess_rate: value.plan.excess_rate === undefined
+					? 0
+					: requireNonNegativeInteger(value.plan.excess_rate, 'plan.excess_rate')
+			};
+		}
+
+		return profile;
+	}
+
+	async function handleProfileImport(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+
+		error = '';
+		success = '';
+		try {
+			const profile = parseVehicleProfile(JSON.parse(await file.text()));
+			newVehicle = {
+				id: profile.id,
+				vehicle: profile.vehicle || profile.id,
+				has_plan: !!profile.plan,
+				start_date: profile.plan?.start ?? '',
+				end_date: profile.plan?.end ?? '',
+				annual_allowance: profile.plan?.annual_allowance ?? 10000,
+				start_miles: profile.plan?.start_miles ?? 0,
+				excess_rate: profile.plan?.excess_rate ?? 0
+			};
+			importedProfileName = file.name;
+			success = `Profile "${file.name}" loaded. Review and edit the fields before creating the vehicle.`;
+		} catch (e) {
+			importedProfileName = '';
+			error = e instanceof Error ? `Invalid profile JSON: ${e.message}` : 'Invalid profile JSON';
+		} finally {
+			input.value = '';
+		}
+	}
+
 	async function handleCreateVehicle() {
 		if (!newVehicle.id || (newVehicle.has_plan && (!newVehicle.start_date || !newVehicle.end_date))) {
 			error = 'Please fill in all required fields';
@@ -234,6 +330,7 @@
 
 			showAddForm = false;
 			historyFiles = null;
+			importedProfileName = '';
 			newVehicle = {
 				id: '',
 				vehicle: '',
@@ -256,6 +353,7 @@
 		showAddForm = false;
 		error = '';
 		historyFiles = null;
+		importedProfileName = '';
 		newVehicle = {
 			id: '',
 			vehicle: '',
@@ -416,11 +514,20 @@
 										<p class="truncate text-sm text-carbon-500">{vehicle.id}</p>
 									</div>
 								</div>
-								{#if vehicle.is_default}
-									<span class="px-3 py-1 text-xs font-medium bg-accent-primary/20 text-accent-primary rounded-full">
-										Default
-									</span>
-								{/if}
+								<div class="flex items-center gap-2">
+									<a
+										href={getProfileExportURL(vehicle.id)}
+										download="{vehicle.id}_profile.json"
+										class="btn-secondary text-sm"
+									>
+										Export profile
+									</a>
+									{#if vehicle.is_default}
+										<span class="px-3 py-1 text-xs font-medium bg-accent-primary/20 text-accent-primary rounded-full">
+											Default
+										</span>
+									{/if}
+								</div>
 							</div>
 
 							{#if vehicleStatuses[vehicle.id]?.has_plan}
@@ -514,6 +621,22 @@
 					{/if}
 
 					<form on:submit|preventDefault={handleCreateVehicle} class="space-y-6">
+						<div class="p-4 bg-carbon-900/40 border border-carbon-800 rounded-lg">
+							<label for="profileJson" class="label">Import profile (JSON)</label>
+							<input
+								type="file"
+								id="profileJson"
+								accept=".json,application/json"
+								on:change={handleProfileImport}
+								class="input"
+							/>
+							{#if importedProfileName}
+								<p class="text-xs text-gauge-green mt-2">{importedProfileName} loaded into the form</p>
+							{:else}
+								<p class="text-xs text-carbon-500 mt-2">Loads vehicle details into this form only. Nothing is created until you click Create Vehicle.</p>
+							{/if}
+						</div>
+
 						<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 							<div>
 								<label for="vehicleId" class="label">Vehicle ID *</label>
@@ -525,7 +648,11 @@
 									class="input"
 									required
 								/>
-								<p class="text-xs text-carbon-500 mt-1">Used for CLI commands</p>
+								{#if duplicateVehicleId}
+									<p class="text-xs text-gauge-amber mt-1">A vehicle with this ID already exists. Edit it before creating to avoid replacing the existing vehicle.</p>
+								{:else}
+									<p class="text-xs text-carbon-500 mt-1">Used for CLI commands</p>
+								{/if}
 							</div>
 							<div>
 								<label for="vehicleName" class="label">Display Name</label>
