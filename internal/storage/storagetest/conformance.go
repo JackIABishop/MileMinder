@@ -215,6 +215,51 @@ func RunConformance(t *testing.T, newStore func(t *testing.T) storage.Store) {
 		}
 	})
 
+	t.Run("SettingsDefaultWhenAbsent", func(t *testing.T) {
+		st := newStore(t)
+		got, err := st.GetSettings(ctx)
+		if err != nil {
+			t.Fatalf("GetSettings on fresh store: %v", err)
+		}
+		if want := model.DefaultSettings(); *got != want {
+			t.Fatalf("fresh settings: want %+v, got %+v", want, *got)
+		}
+	})
+
+	t.Run("SettingsRoundTrip", func(t *testing.T) {
+		st := newStore(t)
+		want := &model.Settings{Currency: "EUR", DistanceUnit: "mi"}
+		if err := st.SaveSettings(ctx, want); err != nil {
+			t.Fatalf("SaveSettings: %v", err)
+		}
+		got, err := st.GetSettings(ctx)
+		if err != nil {
+			t.Fatalf("GetSettings: %v", err)
+		}
+		if *got != *want {
+			t.Fatalf("settings round trip: want %+v, got %+v", *want, *got)
+		}
+	})
+
+	t.Run("SettingsReturnsIndependentCopy", func(t *testing.T) {
+		st := newStore(t)
+		if err := st.SaveSettings(ctx, &model.Settings{Currency: "EUR", DistanceUnit: "mi"}); err != nil {
+			t.Fatalf("SaveSettings: %v", err)
+		}
+		got, err := st.GetSettings(ctx)
+		if err != nil {
+			t.Fatalf("GetSettings: %v", err)
+		}
+		got.Currency = "XXX" // must not leak back into the store
+		reread, err := st.GetSettings(ctx)
+		if err != nil {
+			t.Fatalf("GetSettings: %v", err)
+		}
+		if reread.Currency != "EUR" {
+			t.Fatal("mutating returned settings leaked into the store")
+		}
+	})
+
 	t.Run("CurrentPointer", func(t *testing.T) {
 		st := newStore(t)
 		if cur, err := st.GetCurrent(ctx); err != nil || cur != "" {

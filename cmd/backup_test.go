@@ -17,6 +17,7 @@ func TestWriteBackupArchivesDataFiles(t *testing.T) {
 	writeFile(t, filepath.Join(srcDir, "golf.yml"), "vehicle: Golf\n")
 	writeFile(t, filepath.Join(srcDir, "mini.yml"), "vehicle: Mini\n")
 	writeFile(t, filepath.Join(srcDir, "current"), "golf")
+	writeFile(t, filepath.Join(srcDir, "settings"), "currency: EUR\ndistance_unit: mi\n")
 	writeFile(t, filepath.Join(srcDir, "notes.txt"), "ignore me")
 	if err := os.Mkdir(filepath.Join(srcDir, "nested"), 0755); err != nil {
 		t.Fatal(err)
@@ -27,13 +28,14 @@ func TestWriteBackupArchivesDataFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writeBackup: %v", err)
 	}
-	if count != 3 {
-		t.Fatalf("file count: want 3, got %d", count)
+	if count != 4 {
+		t.Fatalf("file count: want 4, got %d", count)
 	}
 
 	got := readArchive(t, outPath)
 	want := map[string]string{
 		"mileminder/current":  "golf",
+		"mileminder/settings": "currency: EUR\ndistance_unit: mi\n",
 		"mileminder/golf.yml": "vehicle: Golf\n",
 		"mileminder/mini.yml": "vehicle: Mini\n",
 	}
