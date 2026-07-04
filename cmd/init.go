@@ -116,6 +116,22 @@ var initCmd = &cobra.Command{
 		} else {
 			fmt.Printf("Created plan for %s\n", carID)
 		}
+
+		// Optional create-with-history: compose the create above with the same
+		// import pipeline as the import command. The vehicle exists even if the
+		// import fails, so say so rather than implying a rollback.
+		if importPath, _ := cmd.Flags().GetString("import"); importPath != "" {
+			f, err := os.Open(importPath)
+			if err != nil {
+				return fmt.Errorf("vehicle created, but history import failed: open csv: %w", err)
+			}
+			defer f.Close()
+			report, err := runImport(cmd.Context(), st, carID, f, false, false)
+			if err != nil {
+				return fmt.Errorf("vehicle created, but history import failed: %w", err)
+			}
+			fmt.Printf("Imported %d historical reading(s) (skipped %d)\n", report.Added, report.Skipped)
+		}
 		return nil
 	},
 }
@@ -125,4 +141,5 @@ func init() {
 	initCmd.Flags().StringP("car", "c", "", "Vehicle ID")
 	initCmd.Flags().Int("excess-rate", 0, "Excess mileage penalty in pence per mile over allowance (optional)")
 	initCmd.Flags().Bool("no-plan", false, "Create a plan-less mileage tracker")
+	initCmd.Flags().String("import", "", "CSV file of historical readings to import after creating the vehicle")
 }

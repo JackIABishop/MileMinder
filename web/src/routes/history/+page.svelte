@@ -1,12 +1,21 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getCurrentVehicle, getVehicle, getReadings, deleteReading, getExportURL, formatNumber, formatDate, type VehicleStatus, type Reading } from '$lib/api';
+	import { getCurrentVehicle, getVehicle, getReadings, deleteReading, getExportURL, importCSV, ImportError, formatNumber, formatDate, type VehicleStatus, type Reading, type ImportResult, type ImportRowError } from '$lib/api';
 
 	let status: VehicleStatus | null = null;
 	let readings: Reading[] = [];
 	let loading = true;
 	let error = '';
 	let deleteConfirm: string | null = null;
+
+	let fileInput: HTMLInputElement;
+	let importing = false;
+	let importOverwrite = false;
+	let importResult: ImportResult | null = null;
+	let importError = '';
+	let importDetails: ImportRowError[] = [];
+	let canForce = false;
+	let pendingCsvText = '';
 
 	onMount(async () => {
 		await loadData();
@@ -40,6 +49,39 @@
 		}
 	}
 
+	async function handleImportFile(event: Event) {
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = ''; // allow re-selecting the same file after a fix
+		if (!file || !status) return;
+		pendingCsvText = await file.text();
+		await runImport(false);
+	}
+
+	async function runImport(force: boolean) {
+		if (!status || !pendingCsvText) return;
+		importing = true;
+		importResult = null;
+		importError = '';
+		importDetails = [];
+		canForce = false;
+		try {
+			importResult = await importCSV(status.id, pendingCsvText, { overwrite: importOverwrite, force });
+			await loadData();
+		} catch (e) {
+			if (e instanceof ImportError) {
+				importError = e.message;
+				importDetails = e.details;
+				// A monotonic rejection is overridable; parse errors are not.
+				canForce = e.code === 'not_monotonic';
+			} else {
+				importError = e instanceof Error ? e.message : 'Import failed';
+			}
+		} finally {
+			importing = false;
+		}
+	}
+
 	function getMilesDriven(index: number): number {
 		if (index === 0) return 0;
 		return readings[index].miles - readings[index - 1].miles;
@@ -64,18 +106,66 @@
 			<p class="text-carbon-500 mt-2">View and manage your odometer readings</p>
 		</div>
 		{#if status}
-			<a 
-				href={getExportURL(status.id)} 
-				download="{status.id}_readings.csv"
-				class="btn-secondary flex items-center gap-2"
-			>
-				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-				</svg>
-				Export CSV
-			</a>
+			<div class="flex items-center gap-3">
+				<label class="flex items-center gap-1.5 text-sm text-carbon-400 cursor-pointer" title="Replace existing readings on dates the CSV also contains">
+					<input type="checkbox" bind:checked={importOverwrite} class="accent-carbon-400" />
+					Overwrite
+				</label>
+				<button
+					class="btn-secondary flex items-center gap-2"
+					on:click={() => fileInput.click()}
+					disabled={importing}
+				>
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12" />
+					</svg>
+					{importing ? 'Importing…' : 'Import CSV'}
+				</button>
+				<input
+					bind:this={fileInput}
+					type="file"
+					accept=".csv,text/csv"
+					class="hidden"
+					on:change={handleImportFile}
+				/>
+				<a
+					href={getExportURL(status.id)}
+					download="{status.id}_readings.csv"
+					class="btn-secondary flex items-center gap-2"
+				>
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+					</svg>
+					Export CSV
+				</a>
+			</div>
 		{/if}
 	</header>
+
+	{#if importResult}
+		<div class="card border-gauge-green/30 bg-gauge-green/5 mb-6">
+			<p class="text-gauge-green">
+				Imported {importResult.added} reading{importResult.added === 1 ? '' : 's'}
+				(skipped {importResult.skipped}, overwrote {importResult.overwritten}).
+			</p>
+		</div>
+	{:else if importError}
+		<div class="card border-gauge-red/30 bg-gauge-red/5 mb-6">
+			<p class="text-gauge-red">{importError}</p>
+			{#if importDetails.length > 0}
+				<ul class="mt-2 text-sm text-gauge-red/80 font-mono space-y-0.5">
+					{#each importDetails as detail}
+						<li>{detail.line > 0 ? `line ${detail.line}: ` : ''}{detail.message}</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if canForce}
+				<button class="btn-secondary mt-3 text-sm" on:click={() => runImport(true)}>
+					Import anyway (force)
+				</button>
+			{/if}
+		</div>
+	{/if}
 
 	{#if loading}
 		<div class="flex items-center justify-center h-64">
