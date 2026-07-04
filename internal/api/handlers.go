@@ -116,6 +116,20 @@ type GraphData struct {
 	Ideals  []float64 `json:"ideals"`
 }
 
+type VehicleProfile struct {
+	ID      string              `json:"id"`
+	Vehicle string              `json:"vehicle"`
+	Plan    *VehicleProfilePlan `json:"plan,omitempty"`
+}
+
+type VehicleProfilePlan struct {
+	Start           string `json:"start"`
+	End             string `json:"end"`
+	AnnualAllowance int    `json:"annual_allowance"`
+	StartMiles      int    `json:"start_miles"`
+	ExcessRate      int    `json:"excess_rate,omitempty"`
+}
+
 // HandleListVehicles returns all vehicles
 func (s *Server) HandleListVehicles(w http.ResponseWriter, r *http.Request) {
 	records, err := storeFrom(r.Context()).ListVehicles(r.Context())
@@ -168,6 +182,41 @@ func (s *Server) HandleGetVehicle(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
+}
+
+// HandleExportProfile exports vehicle identity and allowance-plan metadata for
+// account migration. It intentionally excludes readings/history; that data
+// round-trips through the CSV import/export endpoints.
+func (s *Server) HandleExportProfile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "vehicle ID required", http.StatusBadRequest)
+		return
+	}
+
+	data, err := storeFrom(r.Context()).GetVehicle(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	profile := VehicleProfile{
+		ID:      id,
+		Vehicle: data.Vehicle,
+	}
+	if data.Plan != nil {
+		profile.Plan = &VehicleProfilePlan{
+			Start:           data.Plan.Start.Format("2006-01-02"),
+			End:             data.Plan.End.Format("2006-01-02"),
+			AnnualAllowance: data.Plan.AnnualAllowance,
+			StartMiles:      data.Plan.StartMiles,
+			ExcessRate:      data.Plan.ExcessRate,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s_profile.json", id))
+	json.NewEncoder(w).Encode(profile)
 }
 
 // HandleCreateVehicle creates a new vehicle.
