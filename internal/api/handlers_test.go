@@ -85,6 +85,55 @@ func TestCreatePlainVehicle(t *testing.T) {
 	}
 }
 
+func TestCreateVehicleDuplicateRejectedWithoutOverwrite(t *testing.T) {
+	original := sampleVehicle()
+	original.Vehicle = "Original Golf"
+	original.Readings["2025-02-01"] = 5500
+	srv, st := newTestServer(t, map[string]*model.VehicleData{"owned": original})
+
+	resp, err := http.Post(srv.URL+"/api/v1/vehicles", "application/json", bytes.NewBufferString(`{
+		"id":"owned",
+		"vehicle":"Replacement",
+		"start_date":"2026-01-01",
+		"end_date":"2029-01-01",
+		"annual_allowance":5000,
+		"start_miles":1
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("want 409, got %d", resp.StatusCode)
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != "vehicle_already_exists" || body.Error.Message != "vehicle already exists" {
+		t.Fatalf("unexpected error body: %+v", body)
+	}
+
+	got, err := st.GetVehicle(context.Background(), "owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Vehicle != "Original Golf" {
+		t.Fatalf("vehicle name overwritten: %q", got.Vehicle)
+	}
+	if !reflect.DeepEqual(got.Plan, original.Plan) {
+		t.Fatalf("plan overwritten: got %+v want %+v", got.Plan, original.Plan)
+	}
+	if !reflect.DeepEqual(got.Readings, original.Readings) {
+		t.Fatalf("readings overwritten: got %+v want %+v", got.Readings, original.Readings)
+	}
+}
+
 func TestCreateVehiclePartialPlanRejected(t *testing.T) {
 	srv, _ := newTestServer(t, nil)
 
