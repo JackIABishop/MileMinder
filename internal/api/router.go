@@ -39,7 +39,7 @@ func NewRouter(store storage.Store, staticDir string) http.Handler {
 	if staticDir != "" {
 		mountStaticDir(mux, staticDir)
 	}
-	return corsMiddleware(mux)
+	return corsMiddleware(securityHeaders(mux))
 }
 
 // NewRouterWithFS creates the single-user API router serving the embedded SPA
@@ -49,7 +49,7 @@ func NewRouterWithFS(store storage.Store, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/meta", handleMeta(modeSingleUser))
 	registerDataRoutes(mux, NewServer(), singleUser(store))
 	mountStaticFS(mux, staticFS)
-	return mux
+	return securityHeaders(mux)
 }
 
 // mountStaticDir serves the SPA from disk with client-side-routing fallback.
@@ -134,6 +134,13 @@ func corsMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		next.ServeHTTP(w, r)
+	})
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
 	})
 }

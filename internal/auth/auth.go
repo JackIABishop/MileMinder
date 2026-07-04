@@ -56,6 +56,14 @@ type Session struct {
 	ExpiresAt time.Time `yaml:"expires_at" json:"expires_at"`
 }
 
+// PasswordReset is a single-use password reset token. As with sessions, only a
+// hash of the emailed token is stored.
+type PasswordReset struct {
+	TokenHash string    `yaml:"token_hash" json:"-"`
+	UserID    string    `yaml:"user_id" json:"user_id"`
+	ExpiresAt time.Time `yaml:"expires_at" json:"expires_at"`
+}
+
 // UserStore persists accounts. Emails are normalised (lower-cased, trimmed) by
 // the implementation, so callers may pass raw input.
 type UserStore interface {
@@ -68,6 +76,8 @@ type UserStore interface {
 	GetUserByID(ctx context.Context, id string) (*User, error)
 	// ListUsers returns every account.
 	ListUsers(ctx context.Context) ([]*User, error)
+	// UpdatePassword replaces the user's password hash, or returns ErrNotFound.
+	UpdatePassword(ctx context.Context, userID, passwordHash string) error
 }
 
 // SessionStore persists sessions keyed by token hash.
@@ -77,8 +87,21 @@ type SessionStore interface {
 	// not exist or has expired.
 	GetSession(ctx context.Context, tokenHash string) (*Session, error)
 	DeleteSession(ctx context.Context, tokenHash string) error
+	// DeleteUserSessions deletes a user's sessions except exceptTokenHash. An
+	// empty exceptTokenHash deletes all sessions for the user.
+	DeleteUserSessions(ctx context.Context, userID, exceptTokenHash string) error
 	// TouchSession extends a session's expiry (the sliding-window refresh).
 	TouchSession(ctx context.Context, tokenHash string, expires time.Time) error
+}
+
+// PasswordResetStore persists single-use reset tokens keyed by token hash.
+type PasswordResetStore interface {
+	// CreateReset creates or replaces the outstanding reset for userID.
+	CreateReset(ctx context.Context, tokenHash, userID string, expires time.Time) error
+	// ConsumeReset atomically returns and deletes a non-expired reset.
+	ConsumeReset(ctx context.Context, tokenHash string) (*PasswordReset, error)
+	// DeleteResetsForUser deletes all outstanding resets for a user.
+	DeleteResetsForUser(ctx context.Context, userID string) error
 }
 
 // NormalizeEmail lower-cases and trims an email so lookups and uniqueness are

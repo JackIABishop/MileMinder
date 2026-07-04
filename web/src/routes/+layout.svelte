@@ -9,16 +9,17 @@
 	let vehicles: VehicleListItem[] = [];
 	let currentVehicle: string = '';
 	let showVehicleMenu = false;
+	const authRoutes = new Set(['/login', '/forgot', '/reset']);
 
-	// The login page renders bare (no sidebar). In hosted mode an unauthenticated
-	// visitor is bounced there; single-user mode never shows any of this.
-	$: isLoginRoute = $page.url.pathname === '/login';
+	// Auth pages render bare (no sidebar). In hosted mode an unauthenticated
+	// visitor is bounced to login; single-user mode never shows any of this.
+	$: isAuthRoute = authRoutes.has($page.url.pathname);
 	$: needsLogin = $mode === 'hosted' && !$user;
-	$: showChrome = $authReady && !isLoginRoute && !needsLogin;
+	$: showChrome = $authReady && !isAuthRoute && !needsLogin;
 
 	onMount(async () => {
 		await initAuth();
-		if (needsLogin && !isLoginRoute) {
+		if (needsLogin && !isAuthRoute) {
 			goto('/login');
 			return;
 		}
@@ -53,7 +54,7 @@
 	$: currentVehicleData = vehicles.find(v => v.id === currentVehicle);
 </script>
 
-{#if isLoginRoute}
+{#if isAuthRoute}
 	<slot />
 {:else if !$authReady}
 	<div class="min-h-screen flex items-center justify-center text-carbon-500">Loading…</div>

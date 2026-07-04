@@ -83,6 +83,18 @@ func (m *MemoryUserStore) ListUsers(ctx context.Context) ([]*User, error) {
 	return users, nil
 }
 
+func (m *MemoryUserStore) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	u, ok := m.byID[userID]
+	if !ok {
+		return ErrNotFound
+	}
+	u.PasswordHash = passwordHash
+	return nil
+}
+
 // MemorySessionStore is an in-memory SessionStore for tests.
 type MemorySessionStore struct {
 	mu     sync.Mutex
@@ -130,6 +142,18 @@ func (m *MemorySessionStore) DeleteSession(ctx context.Context, tokenHash string
 	return nil
 }
 
+func (m *MemorySessionStore) DeleteUserSessions(ctx context.Context, userID, exceptTokenHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for hash, sess := range m.byHash {
+		if sess.UserID == userID && (exceptTokenHash == "" || hash != exceptTokenHash) {
+			delete(m.byHash, hash)
+		}
+	}
+	return nil
+}
+
 func (m *MemorySessionStore) TouchSession(ctx context.Context, tokenHash string, expires time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -142,8 +166,65 @@ func (m *MemorySessionStore) TouchSession(ctx context.Context, tokenHash string,
 	return nil
 }
 
+// MemoryPasswordResetStore is an in-memory PasswordResetStore for tests.
+type MemoryPasswordResetStore struct {
+	mu     sync.Mutex
+	byHash map[string]*PasswordReset
+}
+
+// NewMemoryPasswordResetStore returns an empty in-memory reset store.
+func NewMemoryPasswordResetStore() *MemoryPasswordResetStore {
+	return &MemoryPasswordResetStore{byHash: map[string]*PasswordReset{}}
+}
+
+func clonePasswordReset(r *PasswordReset) *PasswordReset {
+	cp := *r
+	return &cp
+}
+
+func (m *MemoryPasswordResetStore) CreateReset(ctx context.Context, tokenHash, userID string, expires time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for hash, reset := range m.byHash {
+		if reset.UserID == userID {
+			delete(m.byHash, hash)
+		}
+	}
+	m.byHash[tokenHash] = &PasswordReset{TokenHash: tokenHash, UserID: userID, ExpiresAt: expires}
+	return nil
+}
+
+func (m *MemoryPasswordResetStore) ConsumeReset(ctx context.Context, tokenHash string) (*PasswordReset, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	reset, ok := m.byHash[tokenHash]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	delete(m.byHash, tokenHash)
+	if time.Now().After(reset.ExpiresAt) {
+		return nil, ErrNotFound
+	}
+	return clonePasswordReset(reset), nil
+}
+
+func (m *MemoryPasswordResetStore) DeleteResetsForUser(ctx context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for hash, reset := range m.byHash {
+		if reset.UserID == userID {
+			delete(m.byHash, hash)
+		}
+	}
+	return nil
+}
+
 // Compile-time assertions.
 var (
-	_ UserStore    = (*MemoryUserStore)(nil)
-	_ SessionStore = (*MemorySessionStore)(nil)
+	_ UserStore          = (*MemoryUserStore)(nil)
+	_ SessionStore       = (*MemorySessionStore)(nil)
+	_ PasswordResetStore = (*MemoryPasswordResetStore)(nil)
 )

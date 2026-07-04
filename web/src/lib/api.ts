@@ -262,6 +262,27 @@ export async function signup(email: string, password: string): Promise<AuthRespo
 	});
 }
 
+export async function changePassword(currentPassword: string, newPassword: string): Promise<{ status: string }> {
+	return fetchJSON(`${API_BASE}/auth/password`, {
+		method: 'POST',
+		body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+	});
+}
+
+export async function forgotPassword(email: string): Promise<{ status: string }> {
+	return fetchJSON(`${API_BASE}/auth/forgot`, {
+		method: 'POST',
+		body: JSON.stringify({ email })
+	});
+}
+
+export async function resetPassword(token: string, newPassword: string): Promise<{ status: string }> {
+	return fetchJSON(`${API_BASE}/auth/reset`, {
+		method: 'POST',
+		body: JSON.stringify({ token, new_password: newPassword })
+	});
+}
+
 export async function logout(): Promise<void> {
 	await fetchJSON(`${API_BASE}/auth/logout`, { method: 'POST' });
 }
