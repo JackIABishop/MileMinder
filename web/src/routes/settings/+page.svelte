@@ -273,7 +273,7 @@
 	<title>Settings | MileMinder</title>
 </svelte:head>
 
-<div class="p-8 max-w-3xl mx-auto">
+<div class="p-4 sm:p-6 lg:p-8 max-w-3xl mx-auto">
 	<header class="mb-8 animate-fade-in">
 		<h1 class="text-3xl font-display font-bold text-carbon-100">Settings</h1>
 		<p class="text-carbon-500 mt-2">Manage your vehicles and preferences</p>
@@ -294,10 +294,10 @@
 		<!-- Account Section (hosted mode only) -->
 		<section class="mb-8">
 			<h2 class="text-xl font-semibold text-carbon-100 mb-4">Account</h2>
-			<div class="flex items-center justify-between p-4 bg-carbon-900/40 border border-carbon-800 rounded-xl">
-				<div>
+			<div class="flex flex-col gap-4 p-4 bg-carbon-900/40 border border-carbon-800 rounded-xl sm:flex-row sm:items-center sm:justify-between">
+				<div class="min-w-0">
 					<p class="text-sm text-carbon-400">Signed in as</p>
-					<p class="text-carbon-100 font-medium">{$user?.email ?? '—'}</p>
+					<p class="truncate text-carbon-100 font-medium">{$user?.email ?? '—'}</p>
 				</div>
 				<button class="btn-secondary" on:click={handleLogout}>Sign out</button>
 			</div>
@@ -340,7 +340,7 @@
 						/>
 					</div>
 				</div>
-				<div class="mt-4 flex justify-end">
+				<div class="mt-4 flex justify-stretch sm:justify-end">
 					<button class="btn-secondary" type="submit" disabled={changingPassword}>
 						{changingPassword ? 'Changing...' : 'Change password'}
 					</button>
@@ -354,7 +354,7 @@
 				{#if loadingAlerts}
 					<p class="text-carbon-400 text-sm">Loading alert preferences...</p>
 				{:else}
-					<div class="flex items-center justify-between gap-4">
+					<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 						<label class="flex items-center gap-3">
 							<input type="checkbox" bind:checked={alertPrefs.enabled} class="w-4 h-4 accent-accent-primary" />
 							<span class="text-carbon-100 font-medium">Email allowance alerts</span>
@@ -382,7 +382,7 @@
 
 	<!-- Vehicles Section -->
 	<section class="mb-8">
-		<div class="flex items-center justify-between mb-4">
+		<div class="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
 			<h2 class="text-xl font-semibold text-carbon-100">Vehicles</h2>
 			{#if !showAddForm}
 				<button class="btn-primary" on:click={() => showAddForm = true}>
@@ -404,16 +404,16 @@
 				<div class="space-y-3 mb-6">
 					{#each vehicles as vehicle}
 						<div class="card animate-slide-up">
-							<div class="flex items-center justify-between">
-								<div class="flex items-center gap-4">
-									<div class="w-10 h-10 rounded-lg bg-accent-primary/20 flex items-center justify-center">
+							<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+								<div class="flex min-w-0 items-center gap-4">
+									<div class="w-10 h-10 shrink-0 rounded-lg bg-accent-primary/20 flex items-center justify-center">
 										<svg class="w-5 h-5 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
 										</svg>
 									</div>
-									<div>
-										<p class="font-medium text-carbon-100">{vehicle.vehicle || vehicle.id}</p>
-										<p class="text-sm text-carbon-500">{vehicle.id}</p>
+									<div class="min-w-0">
+										<p class="truncate font-medium text-carbon-100">{vehicle.vehicle || vehicle.id}</p>
+										<p class="truncate text-sm text-carbon-500">{vehicle.id}</p>
 									</div>
 								</div>
 								{#if vehicle.is_default}
@@ -425,7 +425,7 @@
 
 							{#if vehicleStatuses[vehicle.id]?.has_plan}
 								<!-- Excess-rate editor (#5): settable on existing policy vehicles -->
-								<div class="mt-4 pt-4 border-t border-carbon-800 flex items-end gap-3">
+								<div class="mt-4 pt-4 border-t border-carbon-800 flex flex-col gap-3 sm:flex-row sm:items-end">
 									<div class="flex-1">
 										<label for="rate-{vehicle.id}" class="label">Excess Rate (pence per mile over)</label>
 										<input
@@ -448,7 +448,7 @@
 								</div>
 							{:else}
 								<div class="mt-4 pt-4 border-t border-carbon-800">
-									<div class="flex items-center justify-between gap-3">
+									<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 										<p class="text-sm text-carbon-400">No allowance policy</p>
 										<button class="btn-secondary text-sm" on:click={() => togglePlanForm(vehicle.id)}>
 											{showPlanForm[vehicle.id] ? 'Cancel' : 'Add allowance plan'}
@@ -456,7 +456,7 @@
 									</div>
 									{#if showPlanForm[vehicle.id] && planForms[vehicle.id]}
 										<form on:submit|preventDefault={() => handleAddPlan(vehicle.id)} class="mt-4 space-y-4">
-											<div class="grid grid-cols-2 gap-4">
+											<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 												<div>
 													<label for="planStart-{vehicle.id}" class="label">Plan Start Date *</label>
 													<input id="planStart-{vehicle.id}" type="date" bind:value={planForms[vehicle.id].start_date} class="input" required />
@@ -466,7 +466,7 @@
 													<input id="planEnd-{vehicle.id}" type="date" bind:value={planForms[vehicle.id].end_date} class="input" required />
 												</div>
 											</div>
-											<div class="grid grid-cols-2 gap-4">
+											<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 												<div>
 													<label for="planAllowance-{vehicle.id}" class="label">Annual Allowance (miles) *</label>
 													<input id="planAllowance-{vehicle.id}" type="number" bind:value={planForms[vehicle.id].annual_allowance} class="input font-mono" min="1" required />
@@ -502,7 +502,7 @@
 			<!-- Add Vehicle Form -->
 			{#if showAddForm}
 				<div class="card animate-slide-up">
-					<div class="flex items-center justify-between mb-6">
+					<div class="flex items-center justify-between gap-3 mb-6">
 						<h3 class="text-lg font-semibold text-carbon-100">Add New Vehicle</h3>
 						<button class="btn-ghost text-sm" on:click={resetForm}>Cancel</button>
 					</div>
@@ -514,7 +514,7 @@
 					{/if}
 
 					<form on:submit|preventDefault={handleCreateVehicle} class="space-y-6">
-						<div class="grid grid-cols-2 gap-4">
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 							<div>
 								<label for="vehicleId" class="label">Vehicle ID *</label>
 								<input
@@ -544,7 +544,7 @@
 							<span class="text-sm text-carbon-200">Has a mileage allowance (PCP/lease/insurance)</span>
 						</label>
 
-						<div class="grid grid-cols-2 gap-4">
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 							<div>
 								<label for="startDate" class="label">{newVehicle.has_plan ? 'Plan Start Date *' : 'Reading Date'}</label>
 								<input
@@ -569,7 +569,7 @@
 							{/if}
 						</div>
 
-						<div class="grid grid-cols-2 gap-4">
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 							{#if newVehicle.has_plan}
 								<div>
 									<label for="annualAllowance" class="label">Annual Allowance (miles) *</label>
@@ -624,7 +624,7 @@
 							</div>
 						{/if}
 
-						<div class="flex gap-3 pt-4">
+						<div class="flex flex-col gap-3 pt-4 sm:flex-row">
 							<button type="submit" class="btn-primary flex-1" disabled={submitting}>
 								{#if submitting}
 									Creating...
@@ -659,7 +659,7 @@
 				</span>
 			</div>
 		</div>
-		<div class="mt-6 pt-4 border-t border-carbon-800 flex items-center justify-between text-sm">
+		<div class="mt-6 pt-4 border-t border-carbon-800 flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between">
 			<span class="text-carbon-500">Built with Go + Svelte</span>
 			<a href="https://github.com/JackIABishop/MileMinder" target="_blank" rel="noopener" class="text-accent-primary hover:underline">
 				GitHub →

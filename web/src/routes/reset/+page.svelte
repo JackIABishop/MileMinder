@@ -42,7 +42,7 @@
 	<title>Reset password | MileMinder</title>
 </svelte:head>
 
-<div class="min-h-screen flex items-center justify-center p-6">
+<div class="min-h-screen flex items-center justify-center p-4 sm:p-6">
 	<div class="w-full max-w-sm">
 		<div class="flex items-center gap-3 mb-8 justify-center">
 			<div class="w-10 h-10 rounded-xl bg-gradient-to-br from-accent-primary to-accent-secondary flex items-center justify-center">
@@ -53,13 +53,13 @@
 			<h1 class="font-display font-bold text-2xl text-carbon-100">MileMinder</h1>
 		</div>
 
-		<div class="bg-carbon-900/40 border border-carbon-800 rounded-2xl p-6">
+		<div class="bg-carbon-900/40 border border-carbon-800 rounded-2xl p-5 sm:p-6">
 			<h2 class="text-lg font-semibold text-carbon-100 mb-1">Choose a new password</h2>
 			<p class="text-sm text-carbon-500 mb-6">Use at least 8 characters.</p>
 
 			{#if success}
 				<p class="text-sm text-carbon-200 mb-6">Your password has been reset.</p>
-				<a href="/login" class="block w-full text-center py-2 rounded-xl bg-accent-primary text-carbon-950 font-medium hover:opacity-90 transition-opacity">
+				<a href="/login" class="block w-full min-h-11 text-center py-2 rounded-xl bg-accent-primary text-carbon-950 font-medium hover:opacity-90 transition-opacity">
 					Sign in
 				</a>
 			{:else}
@@ -73,7 +73,7 @@
 							autocomplete="new-password"
 							required
 							minlength="8"
-							class="w-full px-3 py-2 rounded-xl bg-carbon-800/50 border border-carbon-700 text-carbon-100 focus:outline-none focus:border-accent-primary"
+							class="w-full min-h-11 px-3 py-2 rounded-xl bg-carbon-800/50 border border-carbon-700 text-carbon-100 focus:outline-none focus:border-accent-primary"
 						/>
 					</div>
 					<div>
@@ -85,7 +85,7 @@
 							autocomplete="new-password"
 							required
 							minlength="8"
-							class="w-full px-3 py-2 rounded-xl bg-carbon-800/50 border border-carbon-700 text-carbon-100 focus:outline-none focus:border-accent-primary"
+							class="w-full min-h-11 px-3 py-2 rounded-xl bg-carbon-800/50 border border-carbon-700 text-carbon-100 focus:outline-none focus:border-accent-primary"
 						/>
 					</div>
 
@@ -98,7 +98,7 @@
 					<button
 						type="submit"
 						disabled={submitting}
-						class="w-full py-2 rounded-xl bg-accent-primary text-carbon-950 font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+						class="w-full min-h-11 py-2 rounded-xl bg-accent-primary text-carbon-950 font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
 					>
 						{submitting ? 'Please wait...' : 'Reset password'}
 					</button>

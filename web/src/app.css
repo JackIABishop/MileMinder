@@ -7,6 +7,11 @@
 		font-family: 'Outfit', system-ui, sans-serif;
 	}
 
+	html,
+	body {
+		overflow-x: hidden;
+	}
+
 	body {
 		@apply bg-carbon-950 text-carbon-100 min-h-screen;
 		background-image: 
@@ -35,7 +40,7 @@
 
 @layer components {
 	.card {
-		@apply bg-carbon-900/60 backdrop-blur-sm border border-carbon-800 rounded-2xl p-6;
+		@apply bg-carbon-900/60 backdrop-blur-sm border border-carbon-800 rounded-xl sm:rounded-2xl p-4 sm:p-6;
 	}
 
 	.card-hover {
@@ -43,7 +48,7 @@
 	}
 
 	.btn {
-		@apply px-4 py-2 rounded-lg font-medium transition-all duration-200;
+		@apply min-h-11 px-4 py-2 rounded-lg font-medium transition-all duration-200;
 	}
 
 	.btn-primary {
@@ -59,7 +64,7 @@
 	}
 
 	.input {
-		@apply w-full px-4 py-3 bg-carbon-800/50 border border-carbon-700 rounded-lg 
+		@apply w-full min-h-11 px-4 py-3 bg-carbon-800/50 border border-carbon-700 rounded-lg 
 		       text-carbon-100 placeholder-carbon-500
 		       focus:outline-none focus:border-accent-primary focus:ring-1 focus:ring-accent-primary/50
 		       transition-all duration-200;
@@ -111,7 +116,7 @@
 
 	/* Number animations */
 	.number-display {
-		@apply font-mono text-4xl font-bold tracking-tight;
+		@apply font-mono text-3xl sm:text-4xl font-bold tracking-tight break-words;
 	}
 
 	.number-unit {
@@ -120,7 +125,7 @@
 
 	/* Navigation */
 	.nav-link {
-		@apply flex items-center gap-3 px-4 py-3 rounded-xl text-carbon-400 
+		@apply flex min-h-11 items-center gap-3 px-4 py-3 rounded-xl text-carbon-400 
 		       transition-all duration-200 hover:text-carbon-100 hover:bg-carbon-800/50;
 	}
 
