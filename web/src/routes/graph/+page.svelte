@@ -240,7 +240,7 @@
 						padding: 12,
 						titleFont: {
 							family: 'Outfit',
-							weight: '600'
+							weight: 600
 						},
 						bodyFont: {
 							family: 'JetBrains Mono'
@@ -248,14 +248,14 @@
 						callbacks: {
 							title: function(items) {
 								if (!items.length) return '';
-								return new Date(items[0].parsed.x).toLocaleDateString('en-GB', {
+								return new Date(items[0].parsed.x ?? 0).toLocaleDateString('en-GB', {
 									day: '2-digit',
 									month: 'short',
 									year: 'numeric'
 								});
 							},
 							label: function(context) {
-								return `${context.dataset.label}: ${formatNumber(Math.round(context.parsed.y))} mi`;
+								return `${context.dataset.label}: ${formatNumber(Math.round(context.parsed.y ?? 0))} mi`;
 							},
 							// For an actual/projected point, also show the allowance at
 							// that date and how far above/below the line it sits.
@@ -264,9 +264,9 @@
 								if (!items.length) return [];
 								const item = items[0];
 								if (item.dataset.label === 'Allowance Limit') return [];
-								const date = new Date(item.parsed.x);
+								const date = new Date(item.parsed.x ?? 0);
 								const allowance = idealAt(date, start, annual);
-								const diff = item.parsed.y - allowance;
+								const diff = (item.parsed.y ?? 0) - allowance;
 								const sign = diff >= 0 ? '+' : '';
 								return [
 									`Allowance: ${formatNumber(Math.round(allowance))} mi`,
