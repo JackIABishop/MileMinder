@@ -85,6 +85,55 @@ func TestCreatePlainVehicle(t *testing.T) {
 	}
 }
 
+func TestCreateVehicleDuplicateRejectedWithoutOverwrite(t *testing.T) {
+	original := sampleVehicle()
+	original.Vehicle = "Original Golf"
+	original.Readings["2025-02-01"] = 5500
+	srv, st := newTestServer(t, map[string]*model.VehicleData{"owned": original})
+
+	resp, err := http.Post(srv.URL+"/api/v1/vehicles", "application/json", bytes.NewBufferString(`{
+		"id":"owned",
+		"vehicle":"Replacement",
+		"start_date":"2026-01-01",
+		"end_date":"2029-01-01",
+		"annual_allowance":5000,
+		"start_miles":1
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("want 409, got %d", resp.StatusCode)
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != "vehicle_already_exists" || body.Error.Message != "vehicle already exists" {
+		t.Fatalf("unexpected error body: %+v", body)
+	}
+
+	got, err := st.GetVehicle(context.Background(), "owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Vehicle != "Original Golf" {
+		t.Fatalf("vehicle name overwritten: %q", got.Vehicle)
+	}
+	if !reflect.DeepEqual(got.Plan, original.Plan) {
+		t.Fatalf("plan overwritten: got %+v want %+v", got.Plan, original.Plan)
+	}
+	if !reflect.DeepEqual(got.Readings, original.Readings) {
+		t.Fatalf("readings overwritten: got %+v want %+v", got.Readings, original.Readings)
+	}
+}
+
 func TestCreateVehiclePartialPlanRejected(t *testing.T) {
 	srv, _ := newTestServer(t, nil)
 
@@ -135,6 +184,110 @@ func TestCreateVehicleDecimalExcessRateRejectedCleanly(t *testing.T) {
 	if body.Error.Code != "invalid_excess_rate" || body.Error.Message != "excess_rate must be a whole number of pence" {
 		t.Fatalf("unexpected error body: %+v", body)
 	}
+}
+
+func TestExportPolicyVehicleProfile(t *testing.T) {
+	vehicle := sampleVehicle()
+	vehicle.Plan.ExcessRate = 12
+	srv, _ := newTestServer(t, map[string]*model.VehicleData{
+		"golf": vehicle,
+	})
+
+	resp, err := http.Get(srv.URL + "/api/v1/vehicles/golf/profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content-type = %q, want application/json", got)
+	}
+	if got := resp.Header.Get("Content-Disposition"); got != "attachment; filename=golf_profile.json" {
+		t.Fatalf("content-disposition = %q", got)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["readings"]; ok {
+		t.Fatal("profile export must not include readings")
+	}
+
+	var profile api.VehicleProfile
+	if err := json.Unmarshal(mustMarshal(t, raw), &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.ID != "golf" || profile.Vehicle != "Golf" {
+		t.Fatalf("unexpected profile identity: %+v", profile)
+	}
+	if profile.Plan == nil {
+		t.Fatal("policy vehicle profile missing plan")
+	}
+	if profile.Plan.Start != "2025-01-01" || profile.Plan.End != "2028-01-01" {
+		t.Fatalf("plan dates should be date-only strings: %+v", profile.Plan)
+	}
+	if profile.Plan.AnnualAllowance != 10000 || profile.Plan.StartMiles != 5000 || profile.Plan.ExcessRate != 12 {
+		t.Fatalf("unexpected profile plan: %+v", profile.Plan)
+	}
+}
+
+func TestExportPlainVehicleProfileOmitsPlanAndReadings(t *testing.T) {
+	srv, _ := newTestServer(t, map[string]*model.VehicleData{
+		"owned": {Vehicle: "Owned Car", Readings: map[string]int{"2025-01-01": 10000}},
+	})
+
+	resp, err := http.Get(srv.URL + "/api/v1/vehicles/owned/profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp.StatusCode)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["plan"]; ok {
+		t.Fatal("plain vehicle profile must omit plan")
+	}
+	if _, ok := raw["readings"]; ok {
+		t.Fatal("profile export must not include readings")
+	}
+
+	var profile api.VehicleProfile
+	if err := json.Unmarshal(mustMarshal(t, raw), &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.ID != "owned" || profile.Vehicle != "Owned Car" {
+		t.Fatalf("unexpected profile: %+v", profile)
+	}
+}
+
+func TestExportMissingVehicleProfileReturnsNotFound(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+
+	resp, err := http.Get(srv.URL + "/api/v1/vehicles/missing/profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", resp.StatusCode)
+	}
+}
+
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func TestPatchExcessRateOnPlainRejected(t *testing.T) {

@@ -106,6 +106,20 @@ export interface AddReadingRequest {
 	force?: boolean;
 }
 
+export interface VehicleProfilePlan {
+	start: string;
+	end: string;
+	annual_allowance: number;
+	start_miles: number;
+	excess_rate?: number;
+}
+
+export interface VehicleProfile {
+	id: string;
+	vehicle: string;
+	plan?: VehicleProfilePlan;
+}
+
 export interface AlertPrefs {
 	user_id: string;
 	enabled: boolean;
@@ -294,6 +308,12 @@ export async function getMe(): Promise<User> {
 // Export CSV (returns download URL)
 export function getExportURL(vehicleId: string): string {
 	return `${API_BASE}/vehicles/${encodeURIComponent(vehicleId)}/export`;
+}
+
+// Export a vehicle profile for account migration. This contains identity and
+// optional plan metadata only; readings/history use the CSV export path.
+export function getProfileExportURL(vehicleId: string): string {
+	return `${API_BASE}/vehicles/${encodeURIComponent(vehicleId)}/profile`;
 }
 
 // CSV import (round-trips with the export format: header "date,miles",

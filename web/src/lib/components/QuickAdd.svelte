@@ -12,10 +12,10 @@
 	}
 </script>
 
-<div class="flex flex-wrap gap-2">
+<div class="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
 	{#each quickAmounts as amount}
 		<button
-			class="btn-secondary text-sm flex items-center gap-1"
+			class="btn-secondary text-sm flex items-center justify-center gap-1"
 			on:click={() => addQuick(amount)}
 		>
 			<span class="text-accent-primary">+{amount}</span>

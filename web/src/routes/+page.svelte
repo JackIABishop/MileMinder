@@ -73,7 +73,7 @@
 	<title>Dashboard | MileMinder</title>
 </svelte:head>
 
-<div class="p-8">
+<div class="p-4 sm:p-6 lg:p-8">
 	<!-- Header -->
 	<header class="mb-8 animate-fade-in">
 		<p class="text-carbon-500 text-sm mb-1">{today}</p>
@@ -98,10 +98,10 @@
 	{:else if status}
 		{#if status.has_plan}
 		<!-- Main Gauge -->
-		<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+		<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-8">
 			<div class="lg:col-span-1 card flex flex-col items-center justify-center py-8 animate-slide-up">
 				<Gauge percent={status.percent_used} size={220} strokeWidth={14}>
-					<span class="text-5xl font-mono font-bold text-carbon-100">
+					<span class="text-4xl sm:text-5xl font-mono font-bold text-carbon-100">
 						{Math.round(status.percent_used)}
 					</span>
 					<span class="text-lg text-carbon-400">% used</span>
@@ -119,7 +119,7 @@
 			</div>
 
 			<!-- Stats Grid -->
-			<div class="lg:col-span-2 grid grid-cols-2 gap-4">
+			<div class="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
 				<StatCard 
 					title="Current Odometer" 
 					value={formatNumber(status.latest_reading)} 
@@ -159,9 +159,9 @@
 				/>
 
 				<!-- Average annual mileage: lifetime average (for insurance) + recent pace -->
-				<div class="col-span-2 card animate-slide-up">
+				<div class="sm:col-span-2 card animate-slide-up">
 					<h3 class="text-sm font-medium text-carbon-400 mb-3">Average Annual Mileage</h3>
-					<div class="flex items-end justify-between gap-4">
+					<div class="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-end">
 						<div>
 							<div class="flex items-baseline gap-1">
 								<span class="number-display text-carbon-100">{formatNumber(Math.round(status.avg_annual_mileage))}</span>
@@ -169,12 +169,12 @@
 							</div>
 							<p class="mt-1 text-xs text-carbon-500">Lifetime average — quote this for insurance</p>
 						</div>
-						<div class="text-right">
-							<div class="flex items-baseline gap-1 justify-end">
+						<div class="text-left sm:text-right">
+							<div class="flex items-baseline gap-1 sm:justify-end">
 								<span class="font-mono text-xl font-semibold text-carbon-300">{formatNumber(Math.round(status.recent_annual_mileage))}</span>
 								<span class="text-sm text-carbon-500">mi/yr</span>
 							</div>
-							<div class="mt-1 flex items-center justify-end gap-2">
+							<div class="mt-1 flex flex-wrap items-center gap-2 sm:justify-end">
 								<p class="text-xs text-carbon-500">Last 90 days</p>
 								{#if trendBadge}
 									<span class="flex items-center gap-1 text-xs font-medium {trendBadge.color}">
@@ -253,7 +253,7 @@
 				</svg>
 				Year-End Projection
 			</h3>
-			<div class="flex items-center gap-4">
+			<div class="flex flex-col gap-4 sm:flex-row sm:items-center">
 				<div class="flex-1">
 					<p class="text-carbon-400 mb-2">At your current rate of {formatNumber(status.daily_rate, 1)} mi/day:</p>
 					<p class="text-2xl font-mono {status.projected_over ? 'text-gauge-red' : 'text-gauge-green'}">
@@ -261,7 +261,7 @@
 						<span class="text-lg">{status.projected_over ? 'over' : 'under'} allowance</span>
 					</p>
 				</div>
-				<div class="w-16 h-16 rounded-full flex items-center justify-center {status.projected_over ? 'bg-gauge-red/20' : 'bg-gauge-green/20'}">
+				<div class="w-16 h-16 shrink-0 rounded-full flex items-center justify-center {status.projected_over ? 'bg-gauge-red/20' : 'bg-gauge-green/20'}">
 					{#if status.projected_over}
 						<svg class="w-8 h-8 text-gauge-red" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -276,7 +276,7 @@
 
 			<!-- Overage cost estimate (#5): only when an excess rate is configured -->
 			{#if status.excess_rate}
-				<div class="mt-4 pt-4 border-t border-carbon-800 flex items-center justify-between">
+				<div class="mt-4 pt-4 border-t border-carbon-800 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<div>
 						<p class="text-sm text-carbon-400">Projected penalty over the full term</p>
 						<p class="text-xs text-carbon-500 mt-1">
@@ -294,14 +294,14 @@
 			{/if}
 		</div>
 		{:else}
-			<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+			<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-8">
 				<div class="lg:col-span-1 card flex flex-col justify-center py-8 animate-slide-up">
 					<p class="text-sm text-carbon-500 mb-2">No allowance policy</p>
-					<p class="text-5xl font-mono font-bold text-carbon-100">{formatNumber(status.latest_reading)}</p>
+					<p class="text-4xl sm:text-5xl font-mono font-bold text-carbon-100">{formatNumber(status.latest_reading)}</p>
 					<p class="text-lg text-carbon-400 mt-1">mi current odometer</p>
 				</div>
 
-				<div class="lg:col-span-2 grid grid-cols-2 gap-4">
+				<div class="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
 					<StatCard 
 						title="Current Odometer" 
 						value={formatNumber(status.latest_reading)} 
@@ -314,9 +314,9 @@
 						unit="mi/day"
 						subtitle="Lifetime pace"
 					/>
-					<div class="col-span-2 card animate-slide-up">
+					<div class="sm:col-span-2 card animate-slide-up">
 						<h3 class="text-sm font-medium text-carbon-400 mb-3">Average Annual Mileage</h3>
-						<div class="flex items-end justify-between gap-4">
+						<div class="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-end">
 							<div>
 								<div class="flex items-baseline gap-1">
 									<span class="number-display text-carbon-100">{formatNumber(Math.round(status.avg_annual_mileage))}</span>
@@ -324,12 +324,12 @@
 								</div>
 								<p class="mt-1 text-xs text-carbon-500">Lifetime average</p>
 							</div>
-							<div class="text-right">
-								<div class="flex items-baseline gap-1 justify-end">
+							<div class="text-left sm:text-right">
+								<div class="flex items-baseline gap-1 sm:justify-end">
 									<span class="font-mono text-xl font-semibold text-carbon-300">{formatNumber(Math.round(status.recent_annual_mileage))}</span>
 									<span class="text-sm text-carbon-500">mi/yr</span>
 								</div>
-								<div class="mt-1 flex items-center justify-end gap-2">
+								<div class="mt-1 flex flex-wrap items-center gap-2 sm:justify-end">
 									<p class="text-xs text-carbon-500">Last 90 days</p>
 									{#if trendBadge}
 										<span class="flex items-center gap-1 text-xs font-medium {trendBadge.color}">
@@ -347,7 +347,7 @@
 
 		<!-- Quick Add Section -->
 		<div class="card animate-slide-up stagger-5">
-			<div class="flex items-center justify-between mb-4">
+			<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
 				<h3 class="text-lg font-semibold text-carbon-100">Quick Add</h3>
 				<a href="/add" class="text-sm text-accent-primary hover:underline">Full form →</a>
 			</div>

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, importCSV, changePassword, type VehicleListItem, type VehicleStatus } from '$lib/api';
+	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, importCSV, changePassword, getProfileExportURL, type VehicleListItem, type VehicleStatus, type VehicleProfile } from '$lib/api';
 	import { mode, user, logout } from '$lib/auth';
 
 	async function handleLogout() {
@@ -40,6 +40,7 @@
 	// New vehicle form. historyFiles is the optional readings CSV imported
 	// right after creation (create-with-history composes the two API calls).
 	let historyFiles: FileList | null = null;
+	let importedProfileName = '';
 	let newVehicle = {
 		id: '',
 		vehicle: '',
@@ -50,6 +51,11 @@
 		start_miles: 0,
 		excess_rate: 0
 	};
+
+	$: normalizedNewVehicleId = newVehicle.id.toLowerCase().replace(/\s+/g, '_');
+	$: duplicateVehicleId = normalizedNewVehicleId
+		? vehicles.some((vehicle) => vehicle.id === normalizedNewVehicleId)
+		: false;
 
 	onMount(async () => {
 		await loadVehicles();
@@ -194,6 +200,96 @@
 		}
 	}
 
+	function isObject(value: unknown): value is Record<string, unknown> {
+		return typeof value === 'object' && value !== null && !Array.isArray(value);
+	}
+
+	function requireString(value: unknown, field: string): string {
+		if (typeof value !== 'string' || value.trim() === '') {
+			throw new Error(`${field} must be a non-empty string`);
+		}
+		return value;
+	}
+
+	function requireDate(value: unknown, field: string): string {
+		const date = requireString(value, field);
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+			throw new Error(`${field} must be a YYYY-MM-DD date`);
+		}
+		return date;
+	}
+
+	function requireNonNegativeInteger(value: unknown, field: string): number {
+		if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+			throw new Error(`${field} must be a non-negative integer`);
+		}
+		return value;
+	}
+
+	function requirePositiveInteger(value: unknown, field: string): number {
+		const valueNumber = requireNonNegativeInteger(value, field);
+		if (valueNumber <= 0) {
+			throw new Error(`${field} must be greater than 0`);
+		}
+		return valueNumber;
+	}
+
+	function parseVehicleProfile(value: unknown): VehicleProfile {
+		if (!isObject(value)) {
+			throw new Error('Profile JSON must be an object');
+		}
+		const profile: VehicleProfile = {
+			id: requireString(value.id, 'id'),
+			vehicle: typeof value.vehicle === 'string' ? value.vehicle : ''
+		};
+
+		if (value.plan !== undefined) {
+			if (!isObject(value.plan)) {
+				throw new Error('plan must be an object');
+			}
+			profile.plan = {
+				start: requireDate(value.plan.start, 'plan.start'),
+				end: requireDate(value.plan.end, 'plan.end'),
+				annual_allowance: requirePositiveInteger(value.plan.annual_allowance, 'plan.annual_allowance'),
+				start_miles: requireNonNegativeInteger(value.plan.start_miles, 'plan.start_miles'),
+				excess_rate: value.plan.excess_rate === undefined
+					? 0
+					: requireNonNegativeInteger(value.plan.excess_rate, 'plan.excess_rate')
+			};
+		}
+
+		return profile;
+	}
+
+	async function handleProfileImport(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+
+		error = '';
+		success = '';
+		try {
+			const profile = parseVehicleProfile(JSON.parse(await file.text()));
+			newVehicle = {
+				id: profile.id,
+				vehicle: profile.vehicle || profile.id,
+				has_plan: !!profile.plan,
+				start_date: profile.plan?.start ?? '',
+				end_date: profile.plan?.end ?? '',
+				annual_allowance: profile.plan?.annual_allowance ?? 10000,
+				start_miles: profile.plan?.start_miles ?? 0,
+				excess_rate: profile.plan?.excess_rate ?? 0
+			};
+			importedProfileName = file.name;
+			success = `Profile "${file.name}" loaded. Review and edit the fields before creating the vehicle.`;
+		} catch (e) {
+			importedProfileName = '';
+			error = e instanceof Error ? `Invalid profile JSON: ${e.message}` : 'Invalid profile JSON';
+		} finally {
+			input.value = '';
+		}
+	}
+
 	async function handleCreateVehicle() {
 		if (!newVehicle.id || (newVehicle.has_plan && (!newVehicle.start_date || !newVehicle.end_date))) {
 			error = 'Please fill in all required fields';
@@ -234,6 +330,7 @@
 
 			showAddForm = false;
 			historyFiles = null;
+			importedProfileName = '';
 			newVehicle = {
 				id: '',
 				vehicle: '',
@@ -256,6 +353,7 @@
 		showAddForm = false;
 		error = '';
 		historyFiles = null;
+		importedProfileName = '';
 		newVehicle = {
 			id: '',
 			vehicle: '',
@@ -273,7 +371,7 @@
 	<title>Settings | MileMinder</title>
 </svelte:head>
 
-<div class="p-8 max-w-3xl mx-auto">
+<div class="p-4 sm:p-6 lg:p-8 max-w-3xl mx-auto">
 	<header class="mb-8 animate-fade-in">
 		<h1 class="text-3xl font-display font-bold text-carbon-100">Settings</h1>
 		<p class="text-carbon-500 mt-2">Manage your vehicles and preferences</p>
@@ -294,10 +392,10 @@
 		<!-- Account Section (hosted mode only) -->
 		<section class="mb-8">
 			<h2 class="text-xl font-semibold text-carbon-100 mb-4">Account</h2>
-			<div class="flex items-center justify-between p-4 bg-carbon-900/40 border border-carbon-800 rounded-xl">
-				<div>
+			<div class="flex flex-col gap-4 p-4 bg-carbon-900/40 border border-carbon-800 rounded-xl sm:flex-row sm:items-center sm:justify-between">
+				<div class="min-w-0">
 					<p class="text-sm text-carbon-400">Signed in as</p>
-					<p class="text-carbon-100 font-medium">{$user?.email ?? '—'}</p>
+					<p class="truncate text-carbon-100 font-medium">{$user?.email ?? '—'}</p>
 				</div>
 				<button class="btn-secondary" on:click={handleLogout}>Sign out</button>
 			</div>
@@ -340,7 +438,7 @@
 						/>
 					</div>
 				</div>
-				<div class="mt-4 flex justify-end">
+				<div class="mt-4 flex justify-stretch sm:justify-end">
 					<button class="btn-secondary" type="submit" disabled={changingPassword}>
 						{changingPassword ? 'Changing...' : 'Change password'}
 					</button>
@@ -354,7 +452,7 @@
 				{#if loadingAlerts}
 					<p class="text-carbon-400 text-sm">Loading alert preferences...</p>
 				{:else}
-					<div class="flex items-center justify-between gap-4">
+					<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 						<label class="flex items-center gap-3">
 							<input type="checkbox" bind:checked={alertPrefs.enabled} class="w-4 h-4 accent-accent-primary" />
 							<span class="text-carbon-100 font-medium">Email allowance alerts</span>
@@ -382,7 +480,7 @@
 
 	<!-- Vehicles Section -->
 	<section class="mb-8">
-		<div class="flex items-center justify-between mb-4">
+		<div class="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between">
 			<h2 class="text-xl font-semibold text-carbon-100">Vehicles</h2>
 			{#if !showAddForm}
 				<button class="btn-primary" on:click={() => showAddForm = true}>
@@ -404,28 +502,37 @@
 				<div class="space-y-3 mb-6">
 					{#each vehicles as vehicle}
 						<div class="card animate-slide-up">
-							<div class="flex items-center justify-between">
-								<div class="flex items-center gap-4">
-									<div class="w-10 h-10 rounded-lg bg-accent-primary/20 flex items-center justify-center">
+							<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+								<div class="flex min-w-0 items-center gap-4">
+									<div class="w-10 h-10 shrink-0 rounded-lg bg-accent-primary/20 flex items-center justify-center">
 										<svg class="w-5 h-5 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
 										</svg>
 									</div>
-									<div>
-										<p class="font-medium text-carbon-100">{vehicle.vehicle || vehicle.id}</p>
-										<p class="text-sm text-carbon-500">{vehicle.id}</p>
+									<div class="min-w-0">
+										<p class="truncate font-medium text-carbon-100">{vehicle.vehicle || vehicle.id}</p>
+										<p class="truncate text-sm text-carbon-500">{vehicle.id}</p>
 									</div>
 								</div>
-								{#if vehicle.is_default}
-									<span class="px-3 py-1 text-xs font-medium bg-accent-primary/20 text-accent-primary rounded-full">
-										Default
-									</span>
-								{/if}
+								<div class="flex items-center gap-2">
+									<a
+										href={getProfileExportURL(vehicle.id)}
+										download="{vehicle.id}_profile.json"
+										class="btn-secondary text-sm"
+									>
+										Export profile
+									</a>
+									{#if vehicle.is_default}
+										<span class="px-3 py-1 text-xs font-medium bg-accent-primary/20 text-accent-primary rounded-full">
+											Default
+										</span>
+									{/if}
+								</div>
 							</div>
 
 							{#if vehicleStatuses[vehicle.id]?.has_plan}
 								<!-- Excess-rate editor (#5): settable on existing policy vehicles -->
-								<div class="mt-4 pt-4 border-t border-carbon-800 flex items-end gap-3">
+								<div class="mt-4 pt-4 border-t border-carbon-800 flex flex-col gap-3 sm:flex-row sm:items-end">
 									<div class="flex-1">
 										<label for="rate-{vehicle.id}" class="label">Excess Rate (pence per mile over)</label>
 										<input
@@ -448,7 +555,7 @@
 								</div>
 							{:else}
 								<div class="mt-4 pt-4 border-t border-carbon-800">
-									<div class="flex items-center justify-between gap-3">
+									<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 										<p class="text-sm text-carbon-400">No allowance policy</p>
 										<button class="btn-secondary text-sm" on:click={() => togglePlanForm(vehicle.id)}>
 											{showPlanForm[vehicle.id] ? 'Cancel' : 'Add allowance plan'}
@@ -456,7 +563,7 @@
 									</div>
 									{#if showPlanForm[vehicle.id] && planForms[vehicle.id]}
 										<form on:submit|preventDefault={() => handleAddPlan(vehicle.id)} class="mt-4 space-y-4">
-											<div class="grid grid-cols-2 gap-4">
+											<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 												<div>
 													<label for="planStart-{vehicle.id}" class="label">Plan Start Date *</label>
 													<input id="planStart-{vehicle.id}" type="date" bind:value={planForms[vehicle.id].start_date} class="input" required />
@@ -466,7 +573,7 @@
 													<input id="planEnd-{vehicle.id}" type="date" bind:value={planForms[vehicle.id].end_date} class="input" required />
 												</div>
 											</div>
-											<div class="grid grid-cols-2 gap-4">
+											<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 												<div>
 													<label for="planAllowance-{vehicle.id}" class="label">Annual Allowance (miles) *</label>
 													<input id="planAllowance-{vehicle.id}" type="number" bind:value={planForms[vehicle.id].annual_allowance} class="input font-mono" min="1" required />
@@ -502,7 +609,7 @@
 			<!-- Add Vehicle Form -->
 			{#if showAddForm}
 				<div class="card animate-slide-up">
-					<div class="flex items-center justify-between mb-6">
+					<div class="flex items-center justify-between gap-3 mb-6">
 						<h3 class="text-lg font-semibold text-carbon-100">Add New Vehicle</h3>
 						<button class="btn-ghost text-sm" on:click={resetForm}>Cancel</button>
 					</div>
@@ -514,7 +621,23 @@
 					{/if}
 
 					<form on:submit|preventDefault={handleCreateVehicle} class="space-y-6">
-						<div class="grid grid-cols-2 gap-4">
+						<div class="p-4 bg-carbon-900/40 border border-carbon-800 rounded-lg">
+							<label for="profileJson" class="label">Import profile (JSON)</label>
+							<input
+								type="file"
+								id="profileJson"
+								accept=".json,application/json"
+								on:change={handleProfileImport}
+								class="input"
+							/>
+							{#if importedProfileName}
+								<p class="text-xs text-gauge-green mt-2">{importedProfileName} loaded into the form</p>
+							{:else}
+								<p class="text-xs text-carbon-500 mt-2">Loads vehicle details into this form only. Nothing is created until you click Create Vehicle.</p>
+							{/if}
+						</div>
+
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 							<div>
 								<label for="vehicleId" class="label">Vehicle ID *</label>
 								<input
@@ -525,7 +648,11 @@
 									class="input"
 									required
 								/>
-								<p class="text-xs text-carbon-500 mt-1">Used for CLI commands</p>
+								{#if duplicateVehicleId}
+									<p class="text-xs text-gauge-amber mt-1">A vehicle with this ID already exists. Edit it before creating to avoid replacing the existing vehicle.</p>
+								{:else}
+									<p class="text-xs text-carbon-500 mt-1">Used for CLI commands</p>
+								{/if}
 							</div>
 							<div>
 								<label for="vehicleName" class="label">Display Name</label>
@@ -544,7 +671,7 @@
 							<span class="text-sm text-carbon-200">Has a mileage allowance (PCP/lease/insurance)</span>
 						</label>
 
-						<div class="grid grid-cols-2 gap-4">
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 							<div>
 								<label for="startDate" class="label">{newVehicle.has_plan ? 'Plan Start Date *' : 'Reading Date'}</label>
 								<input
@@ -569,7 +696,7 @@
 							{/if}
 						</div>
 
-						<div class="grid grid-cols-2 gap-4">
+						<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 							{#if newVehicle.has_plan}
 								<div>
 									<label for="annualAllowance" class="label">Annual Allowance (miles) *</label>
@@ -624,7 +751,7 @@
 							</div>
 						{/if}
 
-						<div class="flex gap-3 pt-4">
+						<div class="flex flex-col gap-3 pt-4 sm:flex-row">
 							<button type="submit" class="btn-primary flex-1" disabled={submitting}>
 								{#if submitting}
 									Creating...
@@ -659,7 +786,7 @@
 				</span>
 			</div>
 		</div>
-		<div class="mt-6 pt-4 border-t border-carbon-800 flex items-center justify-between text-sm">
+		<div class="mt-6 pt-4 border-t border-carbon-800 flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between">
 			<span class="text-carbon-500">Built with Go + Svelte</span>
 			<a href="https://github.com/JackIABishop/MileMinder" target="_blank" rel="noopener" class="text-accent-primary hover:underline">
 				GitHub →

@@ -116,6 +116,20 @@ type GraphData struct {
 	Ideals  []float64 `json:"ideals"`
 }
 
+type VehicleProfile struct {
+	ID      string              `json:"id"`
+	Vehicle string              `json:"vehicle"`
+	Plan    *VehicleProfilePlan `json:"plan,omitempty"`
+}
+
+type VehicleProfilePlan struct {
+	Start           string `json:"start"`
+	End             string `json:"end"`
+	AnnualAllowance int    `json:"annual_allowance"`
+	StartMiles      int    `json:"start_miles"`
+	ExcessRate      int    `json:"excess_rate,omitempty"`
+}
+
 // HandleListVehicles returns all vehicles
 func (s *Server) HandleListVehicles(w http.ResponseWriter, r *http.Request) {
 	records, err := storeFrom(r.Context()).ListVehicles(r.Context())
@@ -170,11 +184,45 @@ func (s *Server) HandleGetVehicle(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(status)
 }
 
+// HandleExportProfile exports vehicle identity and allowance-plan metadata for
+// account migration. It intentionally excludes readings/history; that data
+// round-trips through the CSV import/export endpoints.
+func (s *Server) HandleExportProfile(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "vehicle ID required", http.StatusBadRequest)
+		return
+	}
+
+	data, err := storeFrom(r.Context()).GetVehicle(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	profile := VehicleProfile{
+		ID:      id,
+		Vehicle: data.Vehicle,
+	}
+	if data.Plan != nil {
+		profile.Plan = &VehicleProfilePlan{
+			Start:           data.Plan.Start.Format("2006-01-02"),
+			End:             data.Plan.End.Format("2006-01-02"),
+			AnnualAllowance: data.Plan.AnnualAllowance,
+			StartMiles:      data.Plan.StartMiles,
+			ExcessRate:      data.Plan.ExcessRate,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s_profile.json", id))
+	json.NewEncoder(w).Encode(profile)
+}
+
 // HandleCreateVehicle creates a new vehicle.
 //
-// SaveVehicle is an upsert, so this currently overwrites an existing vehicle of
-// the same id (unchanged from prior behaviour). Rejecting duplicates with a 409
-// is tracked separately in #31.
+// SaveVehicle is an upsert, so create guards against an existing id before
+// saving to avoid replacing a vehicle's plan and readings.
 func (s *Server) HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID              string     `json:"id"`
@@ -234,7 +282,23 @@ func (s *Server) HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := storeFrom(r.Context()).SaveVehicle(r.Context(), req.ID, data); err != nil {
+	st := storeFrom(r.Context())
+	if _, err := st.GetVehicle(r.Context(), req.ID); err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(apiErrorResponse{
+			Error: apiError{
+				Code:    "vehicle_already_exists",
+				Message: "vehicle already exists",
+			},
+		})
+		return
+	} else if !errors.Is(err, storage.ErrNotFound) {
+		writeStoreError(w, err)
+		return
+	}
+
+	if err := st.SaveVehicle(r.Context(), req.ID, data); err != nil {
 		writeStoreError(w, err)
 		return
 	}
