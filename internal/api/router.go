@@ -85,6 +85,8 @@ func registerDataRoutes(mux *http.ServeMux, s *Server, data middleware) {
 	mux.Handle("GET /api/v1/current", d(s.HandleGetCurrent))
 	mux.Handle("PUT /api/v1/current", d(s.HandleSetCurrent))
 	mux.Handle("GET /api/v1/fleet", d(s.HandleFleet))
+	mux.Handle("GET /api/v1/settings", d(s.HandleGetSettings))
+	mux.Handle("PUT /api/v1/settings", d(s.HandlePutSettings))
 }
 
 // spaHandlerDir serves the SPA from disk, falling back to index.html for client-side routing
