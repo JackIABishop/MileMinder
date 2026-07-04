@@ -9,12 +9,14 @@ const API_BASE = '/api/v1';
 export interface VehicleListItem {
 	id: string;
 	vehicle: string;
+	registration?: string;
 	is_default: boolean;
 }
 
 export interface VehicleStatus {
 	id: string;
 	vehicle: string;
+	registration?: string;
 	has_plan: boolean;
 	latest_reading: number;
 	latest_date: string;
@@ -87,6 +89,7 @@ export interface GraphData {
 export interface CreateVehicleRequest {
 	id: string;
 	vehicle: string;
+	registration?: string;
 	start_date?: string;
 	end_date?: string;
 	annual_allowance?: number;
@@ -94,7 +97,11 @@ export interface CreateVehicleRequest {
 	excess_rate?: number;
 }
 
+// Partial vehicle update (PATCH): identity fields (vehicle, registration)
+// apply independently of the plan fields, so either group can be sent alone.
 export interface UpdatePlanRequest {
+	vehicle?: string;
+	registration?: string;
 	excess_rate?: number;
 	start_date?: string;
 	end_date?: string;
@@ -119,6 +126,7 @@ export interface VehicleProfilePlan {
 export interface VehicleProfile {
 	id: string;
 	vehicle: string;
+	registration?: string;
 	plan?: VehicleProfilePlan;
 }
 

@@ -46,6 +46,7 @@
 	let newVehicle = {
 		id: '',
 		vehicle: '',
+		registration: '',
 		has_plan: true,
 		start_date: '',
 		end_date: '',
@@ -270,6 +271,9 @@
 			id: requireString(value.id, 'id'),
 			vehicle: typeof value.vehicle === 'string' ? value.vehicle : ''
 		};
+		if (value.registration !== undefined) {
+			profile.registration = requireString(value.registration, 'registration');
+		}
 
 		if (value.plan !== undefined) {
 			if (!isObject(value.plan)) {
@@ -301,6 +305,7 @@
 			newVehicle = {
 				id: profile.id,
 				vehicle: profile.vehicle || profile.id,
+				registration: profile.registration ?? '',
 				has_plan: !!profile.plan,
 				start_date: profile.plan?.start ?? '',
 				end_date: profile.plan?.end ?? '',
@@ -331,6 +336,7 @@
 			const payload = {
 				id: newVehicle.id.toLowerCase().replace(/\s+/g, '_'),
 				vehicle: newVehicle.vehicle || newVehicle.id,
+				registration: newVehicle.registration.trim() || undefined,
 				start_miles: newVehicle.start_miles,
 				start_date: newVehicle.start_date || undefined
 			};
@@ -362,6 +368,7 @@
 			newVehicle = {
 				id: '',
 				vehicle: '',
+				registration: '',
 				has_plan: true,
 				start_date: '',
 				end_date: '',
@@ -377,6 +384,44 @@
 		}
 	}
 
+	// Edit details (#40): display name + registration on an existing vehicle.
+	let showEditForm: Record<string, boolean> = {};
+	let editForms: Record<string, { vehicle: string; registration: string }> = {};
+	let savingEdit: Record<string, boolean> = {};
+
+	function toggleEditForm(id: string) {
+		showEditForm = { ...showEditForm, [id]: !showEditForm[id] };
+		if (showEditForm[id]) {
+			editForms = {
+				...editForms,
+				[id]: {
+					vehicle: vehicles.find((v) => v.id === id)?.vehicle ?? '',
+					registration: vehicleStatuses[id]?.registration ?? ''
+				}
+			};
+		}
+	}
+
+	async function handleSaveDetails(id: string) {
+		const form = editForms[id];
+		if (!form) return;
+		savingEdit = { ...savingEdit, [id]: true };
+		error = '';
+		try {
+			await updatePlan(id, {
+				vehicle: form.vehicle.trim() || id,
+				registration: form.registration.trim()
+			});
+			success = `Details updated for ${id}.`;
+			showEditForm = { ...showEditForm, [id]: false };
+			await loadVehicles();
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to update details';
+		} finally {
+			savingEdit = { ...savingEdit, [id]: false };
+		}
+	}
+
 	function resetForm() {
 		showAddForm = false;
 		error = '';
@@ -385,6 +430,7 @@
 		newVehicle = {
 			id: '',
 			vehicle: '',
+			registration: '',
 			has_plan: true,
 			start_date: '',
 			end_date: '',
@@ -569,10 +615,13 @@
 									</div>
 									<div class="min-w-0">
 										<p class="truncate font-medium text-carbon-100">{vehicle.vehicle || vehicle.id}</p>
-										<p class="truncate text-sm text-carbon-500">{vehicle.id}</p>
+										<p class="truncate text-sm text-carbon-500">{vehicleStatuses[vehicle.id]?.registration ? `${vehicleStatuses[vehicle.id].registration} · ${vehicle.id}` : vehicle.id}</p>
 									</div>
 								</div>
 								<div class="flex items-center gap-2">
+									<button class="btn-secondary text-sm" on:click={() => toggleEditForm(vehicle.id)}>
+										{showEditForm[vehicle.id] ? 'Cancel' : 'Edit details'}
+									</button>
 									<a
 										href={getProfileExportURL(vehicle.id)}
 										download="{vehicle.id}_profile.json"
@@ -587,6 +636,24 @@
 									{/if}
 								</div>
 							</div>
+
+							{#if showEditForm[vehicle.id] && editForms[vehicle.id]}
+								<form on:submit|preventDefault={() => handleSaveDetails(vehicle.id)} class="mt-4 pt-4 border-t border-carbon-800 space-y-4">
+									<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+										<div>
+											<label for="editName-{vehicle.id}" class="label">Display Name</label>
+											<input id="editName-{vehicle.id}" type="text" bind:value={editForms[vehicle.id].vehicle} class="input" placeholder={vehicle.id} />
+										</div>
+										<div>
+											<label for="editReg-{vehicle.id}" class="label">Registration</label>
+											<input id="editReg-{vehicle.id}" type="text" bind:value={editForms[vehicle.id].registration} class="input" placeholder="e.g., AB12 CDE" />
+										</div>
+									</div>
+									<button type="submit" class="btn-primary" disabled={savingEdit[vehicle.id]}>
+										{savingEdit[vehicle.id] ? 'Saving...' : 'Save details'}
+									</button>
+								</form>
+							{/if}
 
 							{#if vehicleStatuses[vehicle.id]?.has_plan}
 								<!-- Excess-rate editor (#5): settable on existing policy vehicles -->
@@ -721,6 +788,17 @@
 									placeholder="e.g., Tesla Model 3"
 									class="input"
 								/>
+							</div>
+							<div>
+								<label for="vehicleReg" class="label">Registration</label>
+								<input
+									type="text"
+									id="vehicleReg"
+									bind:value={newVehicle.registration}
+									placeholder="e.g., AB12 CDE"
+									class="input"
+								/>
+								<p class="text-xs text-carbon-500 mt-1">Optional — shown alongside the name to tell similar cars apart</p>
 							</div>
 						</div>
 

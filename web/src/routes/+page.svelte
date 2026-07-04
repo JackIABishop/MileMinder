@@ -86,6 +86,9 @@
 				Dashboard
 			{/if}
 		</h1>
+		{#if status?.registration}
+			<p class="text-carbon-500 text-sm mt-1">{status.registration}</p>
+		{/if}
 	</header>
 
 	{#if loading}
