@@ -49,7 +49,7 @@ type HostedConfig struct {
 func NewHostedRouter(cfg HostedConfig, staticFS fs.FS) http.Handler {
 	mux := hostedMux(cfg)
 	mountStaticFS(mux, staticFS)
-	return mux
+	return securityHeaders(mux)
 }
 
 // NewHostedRouterDir builds the hosted handler serving static files from disk,
@@ -59,7 +59,7 @@ func NewHostedRouterDir(cfg HostedConfig, staticDir string) http.Handler {
 	if staticDir != "" {
 		mountStaticDir(mux, staticDir)
 	}
-	return mux
+	return securityHeaders(mux)
 }
 
 // hostedMux wires the hosted API surface: open meta + rate-limited auth
@@ -94,8 +94,10 @@ func hostedMux(cfg HostedConfig) *http.ServeMux {
 	limiter := newIPRateLimiter(limitPerSec, burst)
 	mux.Handle("POST /api/v1/auth/signup", limiter.wrap(http.HandlerFunc(a.HandleSignup)))
 	mux.Handle("POST /api/v1/auth/login", limiter.wrap(http.HandlerFunc(a.HandleLogin)))
-	mux.Handle("POST /api/v1/auth/forgot", limiter.wrap(http.HandlerFunc(a.HandleForgotPassword)))
-	mux.Handle("POST /api/v1/auth/reset", limiter.wrap(http.HandlerFunc(a.HandleResetPassword)))
+	if cfg.Resets != nil && cfg.Notifier != nil {
+		mux.Handle("POST /api/v1/auth/forgot", limiter.wrap(http.HandlerFunc(a.HandleForgotPassword)))
+		mux.Handle("POST /api/v1/auth/reset", limiter.wrap(http.HandlerFunc(a.HandleResetPassword)))
+	}
 
 	// Session-required routes: auth introspection + all data.
 	sess := requireSession(cfg.Sessions, cfg.Tenants, cfg.SecureCookies)

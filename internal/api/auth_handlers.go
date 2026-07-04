@@ -227,26 +227,26 @@ func (a *authAPI) sendPasswordReset(email string) {
 	user, err := a.users.GetUserByEmail(ctx, email)
 	if err != nil {
 		if !errors.Is(err, auth.ErrNotFound) {
-			log.Printf("password reset lookup failed for %q: %v", email, err)
+			log.Printf("password reset lookup failed: %v", err)
 		}
 		return
 	}
 	token, tokenHash, err := auth.NewToken()
 	if err != nil {
-		log.Printf("password reset token generation failed for %q: %v", email, err)
+		log.Printf("password reset token generation failed for user %q: %v", user.ID, err)
 		return
 	}
 	if err := a.resets.CreateReset(ctx, tokenHash, user.ID, time.Now().Add(passwordResetTTL)); err != nil {
-		log.Printf("password reset store failed for %q: %v", email, err)
+		log.Printf("password reset store failed for user %q: %v", user.ID, err)
 		return
 	}
 	msg, err := renderPasswordResetMessage(a.baseURL, token)
 	if err != nil {
-		log.Printf("password reset render failed for %q: %v", email, err)
+		log.Printf("password reset render failed for user %q: %v", user.ID, err)
 		return
 	}
 	if err := a.notifier.Send(ctx, notify.Recipient{Email: user.Email}, msg); err != nil {
-		log.Printf("password reset send failed for %q: %v", email, err)
+		log.Printf("password reset send failed for user %q: %v", user.ID, err)
 	}
 }
 
