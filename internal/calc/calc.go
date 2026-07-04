@@ -17,6 +17,7 @@ import (
 type Status struct {
 	ID                  string    `json:"id"`
 	Vehicle             string    `json:"vehicle"`
+	Registration        string    `json:"registration,omitempty"`
 	HasPlan             bool      `json:"has_plan"`
 	LatestReading       int       `json:"latest_reading"`
 	LatestDate          string    `json:"latest_date"`
@@ -287,6 +288,7 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 		return Status{
 			ID:                  id,
 			Vehicle:             data.Vehicle,
+			Registration:        data.Registration,
 			HasPlan:             false,
 			LatestReading:       latestMiles,
 			LatestDate:          latestDate,
@@ -425,6 +427,7 @@ func computeStatus(id string, data *model.VehicleData, now time.Time) Status {
 	return Status{
 		ID:                  id,
 		Vehicle:             data.Vehicle,
+		Registration:        data.Registration,
 		HasPlan:             true,
 		LatestReading:       latestMiles,
 		LatestDate:          latestDate,

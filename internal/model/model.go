@@ -13,9 +13,13 @@ type Plan struct {
 }
 
 type VehicleData struct {
-	Vehicle  string         `yaml:"vehicle" json:"vehicle"`
-	Plan     *Plan          `yaml:"plan,omitempty" json:"plan,omitempty"`
-	Readings map[string]int `yaml:"readings" json:"readings"` // date string → miles
+	Vehicle string `yaml:"vehicle" json:"vehicle"`
+	// Registration is the vehicle's plate as free-form user-entered text (no
+	// regional format enforced). Display-only: the vehicle id stays the stable
+	// identifier for storage paths and URLs.
+	Registration string         `yaml:"registration,omitempty" json:"registration,omitempty"`
+	Plan         *Plan          `yaml:"plan,omitempty" json:"plan,omitempty"`
+	Readings     map[string]int `yaml:"readings" json:"readings"` // date string → miles
 }
 
 func (v *VehicleData) HasPlan() bool {
