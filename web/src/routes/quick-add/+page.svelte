@@ -24,6 +24,17 @@
 	let odometerValue = '';
 	let inputEl: HTMLInputElement;
 
+	// Date.toISOString() is UTC, which drifts a day off near local midnight.
+	// Quick-add has no date field to correct a wrong default, so it must use
+	// the device's local calendar date rather than UTC.
+	function todayLocal(): string {
+		const d = new Date();
+		const y = d.getFullYear();
+		const m = String(d.getMonth() + 1).padStart(2, '0');
+		const day = String(d.getDate()).padStart(2, '0');
+		return `${y}-${m}-${day}`;
+	}
+
 	onMount(async () => {
 		try {
 			vehicles = await listVehicles();
@@ -68,7 +79,7 @@
 			const miles = parseInt(odometerValue);
 			await addReading(selectedId, {
 				miles,
-				date: new Date().toISOString().split('T')[0],
+				date: todayLocal(),
 				force: forceOverride
 			});
 			success = `Recorded ${formatNumber(miles)} mi`;
