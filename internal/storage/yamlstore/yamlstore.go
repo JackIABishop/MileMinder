@@ -36,6 +36,12 @@ import (
 // currentFile is the name of the plain-text file holding the default vehicle id.
 const currentFile = "current"
 
+// settingsFile holds the user-level preferences as YAML. Deliberately no .yml
+// extension (matching the "current" pointer): ListVehicles treats every *.yml
+// file in the directory as a vehicle document, so an extensionless name keeps
+// settings out of the vehicle namespace with no reserved-id special case.
+const settingsFile = "settings"
+
 // Store is a storage.Store backed by per-vehicle YAML files in a directory.
 type Store struct {
 	dir string
@@ -224,6 +230,55 @@ func (s *Store) SetCurrent(ctx context.Context, id string) error {
 		return err
 	}); err != nil {
 		return fmt.Errorf("write current pointer: %w", err)
+	}
+	return nil
+}
+
+// GetSettings returns the saved preferences, defaults when the file is absent,
+// and backfills any empty field from the defaults.
+func (s *Store) GetSettings(ctx context.Context) (*model.Settings, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	defaults := model.DefaultSettings()
+	raw, err := os.ReadFile(filepath.Join(s.dir, settingsFile))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &defaults, nil
+		}
+		return nil, fmt.Errorf("read settings: %w", err)
+	}
+	var settings model.Settings
+	if err := yaml.Unmarshal(raw, &settings); err != nil {
+		return nil, fmt.Errorf("parse settings: %w", err)
+	}
+	if settings.Currency == "" {
+		settings.Currency = defaults.Currency
+	}
+	if settings.DistanceUnit == "" {
+		settings.DistanceUnit = defaults.DistanceUnit
+	}
+	return &settings, nil
+}
+
+// SaveSettings atomically replaces the preferences document.
+func (s *Store) SaveSettings(ctx context.Context, settings *model.Settings) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := os.MkdirAll(s.dir, 0755); err != nil {
+		return fmt.Errorf("create store dir: %w", err)
+	}
+	path := filepath.Join(s.dir, settingsFile)
+	if err := atomicfile.Write(path, 0644, func(f *os.File) error {
+		enc := yaml.NewEncoder(f)
+		if err := enc.Encode(settings); err != nil {
+			enc.Close()
+			return err
+		}
+		return enc.Close()
+	}); err != nil {
+		return fmt.Errorf("write settings: %w", err)
 	}
 	return nil
 }

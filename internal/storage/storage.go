@@ -102,4 +102,16 @@ type Store interface {
 	// SetCurrent sets the default vehicle id, returning ErrNotFound if that vehicle
 	// does not exist. The referential check lives in the Store.
 	SetCurrent(ctx context.Context, id string) error
+
+	// GetSettings returns the user-level preferences. When none have been saved
+	// it returns model.DefaultSettings() with a nil error (mirroring GetCurrent's
+	// ""-when-unset), and implementations backfill any empty field from the
+	// defaults so a partial document from an older version stays valid. Settings
+	// scope like the current pointer: per-user in hosted mode, global in
+	// single-user mode.
+	GetSettings(ctx context.Context) (*model.Settings, error)
+
+	// SaveSettings replaces the user-level preferences document. Validation
+	// (e.g. supported currencies) is the caller's job; the Store only persists.
+	SaveSettings(ctx context.Context, s *model.Settings) error
 }
