@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jackiabishop/mileminder/internal/readings"
 )
 
 var addCmd = &cobra.Command{
@@ -48,14 +50,8 @@ var addCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		maxMiles := 0
-		for _, m := range data.Readings {
-			if m > maxMiles {
-				maxMiles = m
-			}
-		}
-		if miles < maxMiles && !force {
-			return fmt.Errorf("new reading %d is less than existing max %d; use --force to override", miles, maxMiles)
+		if max, below := readings.BelowMax(data.Readings, miles); below && !force {
+			return fmt.Errorf("new reading %d is less than existing max %d; use --force to override", miles, max)
 		}
 
 		if err := st.PutReading(ctx, carID, dateStr, miles); err != nil {

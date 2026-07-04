@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackiabishop/mileminder/internal/calc"
 	"github.com/jackiabishop/mileminder/internal/model"
+	"github.com/jackiabishop/mileminder/internal/readings"
 	"github.com/jackiabishop/mileminder/internal/storage"
 )
 
@@ -355,15 +356,9 @@ func (s *Server) HandleAddReading(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate against max existing reading
-	maxMiles := 0
-	for _, m := range data.Readings {
-		if m > maxMiles {
-			maxMiles = m
-		}
-	}
-	if req.Miles < maxMiles && !req.Force {
-		http.Error(w, fmt.Sprintf("new reading %d is less than existing max %d; set force=true to override", req.Miles, maxMiles), http.StatusBadRequest)
+	// Validate against max existing reading (shared rule, per-surface message).
+	if max, below := readings.BelowMax(data.Readings, req.Miles); below && !req.Force {
+		http.Error(w, fmt.Sprintf("new reading %d is less than existing max %d; set force=true to override", req.Miles, max), http.StatusBadRequest)
 		return
 	}
 
