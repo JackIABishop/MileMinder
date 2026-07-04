@@ -1,27 +1,71 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getCurrentVehicle, getVehicle, getGraphData, formatNumber, formatDate, type VehicleStatus, type GraphData } from '$lib/api';
+	import { tick } from 'svelte';
+	import {
+		getCurrentVehicle,
+		getFleet,
+		getGraphData,
+		formatNumber,
+		formatDate,
+		type VehicleStatus,
+		type GraphData
+	} from '$lib/api';
 	import { Chart, registerables } from 'chart.js';
 	import 'chartjs-adapter-date-fns';
 
 	Chart.register(...registerables);
 
+	type GraphMode = 'single' | 'compare';
+
+	type CompareSeries = {
+		id: string;
+		status: VehicleStatus;
+		graph: GraphData;
+		color: string;
+		fill: string;
+		origin: Date;
+		originKind: 'plan start' | 'first reading';
+	};
+
 	let status: VehicleStatus | null = null;
 	let graphData: GraphData | null = null;
+	let fleet: VehicleStatus[] = [];
+	let compareGraphData: Record<string, GraphData> = {};
 	let loading = true;
+	let comparisonLoading = false;
 	let error = '';
+	let comparisonError = '';
 	let chartCanvas: HTMLCanvasElement;
 	let chart: Chart | null = null;
 	let showProjection = false;
 	let showYears = false;
+	let graphMode: GraphMode = 'single';
+	let compareA = '';
+	let compareB = '';
+	let comparisonLoadToken = 0;
+
+	const DAY_MS = 24 * 60 * 60 * 1000;
+	const compareColors = [
+		{ line: '#22c55e', fill: 'rgba(34, 197, 94, 0.08)' },
+		{ line: '#f59e0b', fill: 'rgba(245, 158, 11, 0.08)' }
+	];
 
 	onMount(async () => {
 		try {
-			const current = await getCurrentVehicle();
-			if (current.current) {
-				status = await getVehicle(current.current);
-				graphData = await getGraphData(current.current);
+			const [current, fleetResp] = await Promise.all([getCurrentVehicle(), getFleet()]);
+			fleet = fleetResp.vehicles;
+
+			const currentID =
+				current.current && fleet.some((v) => v.id === current.current)
+					? current.current
+					: fleet[0]?.id || '';
+
+			if (currentID) {
+				status = fleet.find((v) => v.id === currentID) || null;
+				graphData = await getGraphData(currentID);
 			}
+
+			setCompareDefaults(currentID);
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load data';
 		} finally {
@@ -29,12 +73,38 @@
 		}
 	});
 
-	// Render chart when canvas becomes available and we have data
-	$: if (chartCanvas && graphData && !chart) {
-		renderChart();
+	$: compareSeries = buildCompareSeries(compareA, compareB, fleet, compareGraphData);
+	$: compareReady = compareSeries.length === 2;
+	$: shouldLoadComparison =
+		!loading &&
+		graphMode === 'compare' &&
+		fleet.length >= 2 &&
+		(!compareA ||
+			!compareB ||
+			compareA === compareB ||
+			!compareGraphData[compareA] ||
+			!compareGraphData[compareB]) &&
+		!comparisonLoading;
+
+	// Render the active chart once the canvas and its data are available.
+	$: if (chartCanvas && !loading && graphMode === 'single' && status && graphData) {
+		renderSingleChart();
 	}
 
-	const DAY_MS = 24 * 60 * 60 * 1000;
+	$: if (shouldLoadComparison) {
+		loadComparison();
+	}
+
+	$: if (chartCanvas && !loading && graphMode === 'compare' && compareReady && !comparisonLoading) {
+		renderCompareChart();
+	}
+
+	function destroyChart() {
+		if (chart) {
+			chart.destroy();
+			chart = null;
+		}
+	}
 
 	// Whole days between two dates (positive if b is after a)
 	function daysBetween(a: Date, b: Date): number {
@@ -47,12 +117,134 @@
 		return (annual * days) / 365;
 	}
 
-	// Sample a line into weekly points so it stays hoverable at any date
-	// (a two-point line has nothing to snap to between its ends). Weekly
-	// spacing is independent of plan length, so hover resolution is consistent.
+	function originFor(status: VehicleStatus, graph: GraphData): { date: Date; kind: 'plan start' | 'first reading' } {
+		if (status.has_plan) {
+			return { date: new Date(status.plan_start), kind: 'plan start' };
+		}
+		return { date: graph.dates[0] ? new Date(graph.dates[0]) : new Date(), kind: 'first reading' };
+	}
+
+	function displayName(status: VehicleStatus): string {
+		return status.vehicle || status.id;
+	}
+
+	function setCompareDefaults(preferredID = '') {
+		if (fleet.length < 2) {
+			compareA = fleet[0]?.id || '';
+			compareB = '';
+			return;
+		}
+
+		const first = preferredID && fleet.some((v) => v.id === preferredID) ? preferredID : fleet[0].id;
+		const second = fleet.find((v) => v.id !== first)?.id || '';
+		compareA = first;
+		compareB = second;
+	}
+
+	function ensureComparePair() {
+		if (fleet.length < 2) return;
+
+		const validA = compareA && fleet.some((v) => v.id === compareA);
+		if (!validA) {
+			compareA = fleet[0].id;
+		}
+
+		const validB = compareB && fleet.some((v) => v.id === compareB) && compareB !== compareA;
+		if (!validB) {
+			compareB = fleet.find((v) => v.id !== compareA)?.id || '';
+		}
+	}
+
+	async function setGraphMode(next: GraphMode) {
+		if (graphMode === next) return;
+		graphMode = next;
+		destroyChart();
+		if (next === 'compare') {
+			await tick();
+			await loadComparison();
+		}
+	}
+
+	async function updateCompareA() {
+		if (compareA === compareB) {
+			compareB = fleet.find((v) => v.id !== compareA)?.id || '';
+		}
+		await tick();
+		await loadComparison();
+	}
+
+	async function updateCompareB() {
+		if (compareA === compareB) {
+			compareA = fleet.find((v) => v.id !== compareB)?.id || '';
+		}
+		await tick();
+		await loadComparison();
+	}
+
+	async function loadComparison() {
+		destroyChart();
+		comparisonError = '';
+		ensureComparePair();
+		if (fleet.length < 2 || !compareA || !compareB || compareA === compareB) return;
+
+		const token = ++comparisonLoadToken;
+		comparisonLoading = true;
+		try {
+			const ids = [compareA, compareB];
+			const missing = ids.filter((id) => !compareGraphData[id]);
+			if (missing.length > 0) {
+				const loaded = await Promise.all(missing.map((id) => getGraphData(id)));
+				const next = { ...compareGraphData };
+				missing.forEach((id, i) => {
+					next[id] = loaded[i];
+				});
+				compareGraphData = next;
+			}
+		} catch (e) {
+			comparisonError = e instanceof Error ? e.message : 'Failed to load comparison data';
+		} finally {
+			if (token === comparisonLoadToken) {
+				comparisonLoading = false;
+			}
+		}
+	}
+
+	function buildCompareSeries(
+		firstID: string,
+		secondID: string,
+		vehicles: VehicleStatus[],
+		graphs: Record<string, GraphData>
+	): CompareSeries[] {
+		const ids = [firstID, secondID];
+		if (ids.some((id) => !id) || firstID === secondID) return [];
+
+		return ids.flatMap((id, index) => {
+			const vehicle = vehicles.find((v) => v.id === id);
+			const graph = graphs[id];
+			if (!vehicle || !graph) return [];
+
+			const origin = originFor(vehicle, graph);
+			return [
+				{
+					id,
+					status: vehicle,
+					graph,
+					color: compareColors[index].line,
+					fill: compareColors[index].fill,
+					origin: origin.date,
+					originKind: origin.kind
+				}
+			];
+		});
+	}
+
+	// Sample a time line into weekly points so it stays hoverable at any date.
 	function sampleLine(fromMs: number, toMs: number, yAtMs: (ms: number) => number) {
 		const stepMs = 7 * DAY_MS;
 		const points: { x: number; y: number }[] = [];
+		if (toMs <= fromMs) {
+			return [{ x: fromMs, y: yAtMs(fromMs) }];
+		}
 		for (let t = fromMs; t < toMs; t += stepMs) {
 			points.push({ x: t, y: yAtMs(t) });
 		}
@@ -60,14 +252,26 @@
 		return points;
 	}
 
-	async function renderChart() {
+	function sampleElapsedLine(toDays: number, yAtDay: (day: number) => number) {
+		const stepDays = 7;
+		const end = Math.max(0, toDays);
+		const points: { x: number; y: number }[] = [];
+		for (let day = 0; day < end; day += stepDays) {
+			points.push({ x: day, y: yAtDay(day) });
+		}
+		points.push({ x: end, y: yAtDay(end) });
+		return points;
+	}
+
+	function elapsedLabel(days: number): string {
+		if (days < 30) return `day ${Math.round(days)}`;
+		return `day ${Math.round(days)} · month ${Math.floor(days / 30) + 1}`;
+	}
+
+	function renderSingleChart() {
 		if (!graphData || !status || !chartCanvas) return;
 
-		// Destroy existing chart if any
-		if (chart) {
-			chart.destroy();
-			chart = null;
-		}
+		destroyChart();
 
 		const ctx = chartCanvas.getContext('2d');
 		if (!ctx) return;
@@ -99,8 +303,6 @@
 			}
 		}
 
-		// Inline plugin: shade alternating allowance years, draw boundary lines
-		// and "Year N" labels. Gated on the showYears toggle.
 		const yearBandsPlugin = {
 			id: 'yearBands',
 			beforeDatasetsDraw(c: Chart) {
@@ -122,7 +324,6 @@
 				const { ctx, chartArea, scales } = c;
 				const xs = scales.x;
 				ctx.save();
-				// Boundary lines (skip the first — it sits on the axis edge).
 				ctx.strokeStyle = 'rgba(146, 146, 159, 0.35)';
 				ctx.lineWidth = 1;
 				ctx.setLineDash([2, 4]);
@@ -136,7 +337,6 @@
 					ctx.stroke();
 				}
 				ctx.setLineDash([]);
-				// Year labels, centred in the visible portion of each band.
 				ctx.fillStyle = '#91919f';
 				ctx.font = '11px Outfit, sans-serif';
 				ctx.textAlign = 'center';
@@ -151,7 +351,6 @@
 			}
 		};
 
-		// Actual readings plotted at their true dates (miles since plan start).
 		const actualPoints = graphData.dates.map((d, i) => ({
 			x: new Date(d).getTime(),
 			y: graphData!.actuals[i]
@@ -171,9 +370,8 @@
 				pointHoverRadius: 6
 			}
 		];
+
 		if (status.has_plan) {
-			// Ideal allowance line: a straight line from (start, 0) to the axis edge,
-			// sampled weekly so it can be hovered at any date.
 			const idealPoints = sampleLine(start.getTime(), axisMax.getTime(), (ms) =>
 				idealAt(new Date(ms), start, annual)
 			);
@@ -188,8 +386,6 @@
 			});
 		}
 
-		// Projection: extend the last reading to plan end at the current daily
-		// rate, sampled weekly so each future date is hoverable.
 		if (status.has_plan && showProjection && graphData.dates.length > 0) {
 			const lastDate = new Date(graphData.dates[graphData.dates.length - 1]);
 			const lastY = graphData.actuals[graphData.actuals.length - 1];
@@ -257,8 +453,6 @@
 							label: function(context) {
 								return `${context.dataset.label}: ${formatNumber(Math.round(context.parsed.y ?? 0))} mi`;
 							},
-							// For an actual/projected point, also show the allowance at
-							// that date and how far above/below the line it sits.
 							afterBody: function(items) {
 								if (!status?.has_plan) return [];
 								if (!items.length) return [];
@@ -318,6 +512,181 @@
 			}
 		});
 	}
+
+	function renderCompareChart() {
+		if (!chartCanvas || compareSeries.length !== 2) return;
+
+		destroyChart();
+
+		const ctx = chartCanvas.getContext('2d');
+		if (!ctx) return;
+
+		const actualDatasets = compareSeries.map((series) => {
+			const points = series.graph.dates
+				.map((d, i) => ({
+					x: daysBetween(series.origin, new Date(d)),
+					y: series.graph.actuals[i]
+				}))
+				.filter((point) => point.x >= 0);
+
+			return {
+				label: displayName(series.status),
+				data: points,
+				borderColor: series.color,
+				backgroundColor: series.fill,
+				fill: false,
+				tension: 0.3,
+				pointBackgroundColor: series.color,
+				pointBorderColor: series.color,
+				pointRadius: 4,
+				pointHoverRadius: 6,
+				originDate: series.origin,
+				originKind: series.originKind,
+				kind: 'actual'
+			};
+		});
+
+		const maxActualDay = Math.max(
+			30,
+			...actualDatasets.flatMap((dataset) => dataset.data.map((point) => point.x))
+		);
+
+		const allowanceDatasets = compareSeries
+			.filter((series) => series.status.has_plan)
+			.map((series) => {
+				const planEnd = new Date(series.status.plan_end);
+				const planDays = Math.max(0, daysBetween(series.origin, planEnd));
+				const lineEnd = Math.min(Math.max(30, maxActualDay), planDays || maxActualDay);
+
+				return {
+					label: `${displayName(series.status)} allowance`,
+					data: sampleElapsedLine(lineEnd, (day) => (series.status.annual_allowance * day) / 365),
+					borderColor: series.color,
+					backgroundColor: 'transparent',
+					borderDash: [5, 5],
+					pointRadius: 0,
+					pointHoverRadius: 4,
+					originDate: series.origin,
+					originKind: series.originKind,
+					kind: 'allowance',
+					annualAllowance: series.status.annual_allowance
+				};
+			});
+
+		chart = new Chart(ctx, {
+			type: 'line',
+			data: { datasets: [...actualDatasets, ...allowanceDatasets] },
+			options: {
+				responsive: true,
+				maintainAspectRatio: false,
+				interaction: {
+					intersect: false,
+					mode: 'nearest',
+					axis: 'x'
+				},
+				plugins: {
+					legend: {
+						position: 'top',
+						labels: {
+							color: '#b8b8c1',
+							font: {
+								family: 'Outfit'
+							},
+							padding: 20,
+							usePointStyle: true
+						}
+					},
+					tooltip: {
+						backgroundColor: '#1a1a1f',
+						titleColor: '#f7f7f8',
+						bodyColor: '#b8b8c1',
+						borderColor: '#42424b',
+						borderWidth: 1,
+						padding: 12,
+						titleFont: {
+							family: 'Outfit',
+							weight: 600
+						},
+						bodyFont: {
+							family: 'JetBrains Mono'
+						},
+						callbacks: {
+							title: function(items) {
+								if (!items.length) return '';
+								return elapsedLabel(items[0].parsed.x ?? 0);
+							},
+							label: function(context) {
+								const dataset: any = context.dataset;
+								const value = formatNumber(Math.round(context.parsed.y ?? 0));
+								const suffix = dataset.kind === 'allowance' ? ' allowance' : ' normalized miles';
+								return `${dataset.label}: ${value} mi${suffix}`;
+							},
+							afterLabel: function(context) {
+								const dataset: any = context.dataset;
+								const lines = [
+									`Origin: ${dataset.originKind} · ${formatDate(dataset.originDate.toISOString())}`
+								];
+								if (dataset.kind === 'allowance') {
+									lines.push(`${formatNumber(dataset.annualAllowance)} mi/year`);
+								}
+								return lines;
+							}
+						}
+					}
+				},
+				scales: {
+					x: {
+						type: 'linear',
+						min: 0,
+						max: maxActualDay,
+						grid: {
+							color: 'rgba(66, 66, 75, 0.3)'
+						},
+						title: {
+							display: true,
+							text: 'Elapsed time since each vehicle origin',
+							color: '#91919f',
+							font: {
+								family: 'Outfit'
+							}
+						},
+						ticks: {
+							color: '#91919f',
+							font: {
+								family: 'Outfit'
+							},
+							callback: function(value) {
+								return elapsedLabel(Number(value));
+							}
+						}
+					},
+					y: {
+						beginAtZero: true,
+						grid: {
+							color: 'rgba(66, 66, 75, 0.3)'
+						},
+						title: {
+							display: true,
+							text: 'Miles driven since origin',
+							color: '#91919f',
+							font: {
+								family: 'Outfit'
+							}
+						},
+						ticks: {
+							color: '#91919f',
+							font: {
+								family: 'JetBrains Mono'
+							},
+							callback: function(value) {
+								return formatNumber(value as number);
+							}
+						}
+					}
+				}
+			}
+		});
+	}
 </script>
 
 <svelte:head>
@@ -326,8 +695,26 @@
 
 <div class="p-4 sm:p-6 lg:p-8">
 	<header class="mb-8 animate-fade-in">
-		<h1 class="text-3xl font-display font-bold text-carbon-100">Mileage Graph</h1>
-		<p class="text-carbon-500 mt-2">Track your actual usage against the ideal allowance</p>
+		<div class="flex flex-wrap items-start justify-between gap-4">
+			<div>
+				<h1 class="text-3xl font-display font-bold text-carbon-100">Mileage Graph</h1>
+				<p class="text-carbon-500 mt-2">Track usage against allowance or compare two vehicles</p>
+			</div>
+			<div class="inline-flex rounded-lg border border-carbon-700 bg-carbon-800/50 p-1">
+				<button
+					class="px-3 py-2 rounded text-sm font-medium transition-colors {graphMode === 'single' ? 'bg-accent-primary text-carbon-950' : 'text-carbon-400 hover:text-carbon-100'}"
+					on:click={() => setGraphMode('single')}
+				>
+					Single
+				</button>
+				<button
+					class="px-3 py-2 rounded text-sm font-medium transition-colors {graphMode === 'compare' ? 'bg-accent-primary text-carbon-950' : 'text-carbon-400 hover:text-carbon-100'}"
+					on:click={() => setGraphMode('compare')}
+				>
+					Compare
+				</button>
+			</div>
+		</div>
 	</header>
 
 	{#if loading}
@@ -338,92 +725,184 @@
 		<div class="card border-gauge-red/30 bg-gauge-red/5">
 			<p class="text-gauge-red">{error}</p>
 		</div>
-	{:else if status && graphData}
-		<!-- Legend Info -->
-		<div class="grid {status.has_plan ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-4 mb-6">
-			<div class="card animate-slide-up">
-				<div class="flex items-center gap-3">
-					<div class="w-4 h-4 rounded-full bg-gauge-green"></div>
-					<div>
-						<p class="text-sm text-carbon-400">Actual Usage</p>
-						<p class="text-lg font-mono font-semibold text-carbon-100">
-							{formatNumber(graphData.actuals[graphData.actuals.length - 1] || 0)} mi
-						</p>
-					</div>
-				</div>
-			</div>
-			{#if status.has_plan}
-				<div class="card animate-slide-up stagger-1">
+	{:else if graphMode === 'single'}
+		{#if status && graphData}
+			<!-- Legend Info -->
+			<div class="grid {status.has_plan ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-4 mb-6">
+				<div class="card animate-slide-up">
 					<div class="flex items-center gap-3">
-						<div class="w-4 h-4 rounded-full bg-accent-primary"></div>
+						<div class="w-4 h-4 rounded-full bg-gauge-green"></div>
 						<div>
-							<p class="text-sm text-carbon-400">Allowance Limit</p>
+							<p class="text-sm text-carbon-400">Actual Usage</p>
 							<p class="text-lg font-mono font-semibold text-carbon-100">
-								{formatNumber(graphData.ideals[graphData.ideals.length - 1] || 0)} mi
+								{formatNumber(graphData.actuals[graphData.actuals.length - 1] || 0)} mi
 							</p>
 						</div>
 					</div>
 				</div>
-			{/if}
-		</div>
+				{#if status.has_plan}
+					<div class="card animate-slide-up stagger-1">
+						<div class="flex items-center gap-3">
+							<div class="w-4 h-4 rounded-full bg-accent-primary"></div>
+							<div>
+								<p class="text-sm text-carbon-400">Allowance Limit</p>
+								<p class="text-lg font-mono font-semibold text-carbon-100">
+									{formatNumber(graphData.ideals[graphData.ideals.length - 1] || 0)} mi
+								</p>
+							</div>
+						</div>
+					</div>
+				{/if}
+			</div>
 
-		<!-- Chart -->
-		<div class="card animate-slide-up stagger-2">
-			<div class="flex flex-col gap-4 mb-4 lg:flex-row lg:items-center lg:justify-between">
-				<h2 class="text-lg font-semibold text-carbon-100 break-words">{status.vehicle || status.id}</h2>
-				<div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4 lg:justify-end">
-					{#if status.has_plan}
-						<label class="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer select-none">
-							<input
-								type="checkbox"
-								bind:checked={showYears}
-								on:change={renderChart}
-								class="accent-accent-primary"
-							/>
-							Highlight plan years
-						</label>
-						<label class="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer select-none">
-							<input
-								type="checkbox"
-								bind:checked={showProjection}
-								on:change={renderChart}
-								class="accent-accent-primary"
-							/>
-							Project to plan end
-						</label>
-						<p class="text-sm text-carbon-500">
-							{formatDate(status.plan_start)} → {formatDate(status.plan_end)}
+			<!-- Chart -->
+			<div class="card animate-slide-up stagger-2">
+				<div class="flex flex-col gap-4 mb-4 lg:flex-row lg:items-center lg:justify-between">
+					<h2 class="text-lg font-semibold text-carbon-100 break-words">{status.vehicle || status.id}</h2>
+					<div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4 lg:justify-end">
+						{#if status.has_plan}
+							<label class="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer select-none">
+								<input
+									type="checkbox"
+									bind:checked={showYears}
+									on:change={renderSingleChart}
+									class="accent-accent-primary"
+								/>
+								Highlight plan years
+							</label>
+							<label class="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer select-none">
+								<input
+									type="checkbox"
+									bind:checked={showProjection}
+									on:change={renderSingleChart}
+									class="accent-accent-primary"
+								/>
+								Project to plan end
+							</label>
+							<p class="text-sm text-carbon-500">
+								{formatDate(status.plan_start)} → {formatDate(status.plan_end)}
+							</p>
+						{/if}
+					</div>
+				</div>
+				<div class="h-[300px] sm:h-[400px]">
+					<canvas bind:this={chartCanvas}></canvas>
+				</div>
+			</div>
+
+			<!-- Stats Summary -->
+			<div class="grid {status.has_plan ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'} gap-4 mt-6">
+				<div class="card animate-slide-up stagger-3 text-center">
+					<p class="text-sm text-carbon-400 mb-1">Total Readings</p>
+					<p class="text-2xl font-mono font-bold text-carbon-100">{graphData.dates.length}</p>
+				</div>
+				{#if status.has_plan}
+					<div class="card animate-slide-up stagger-4 text-center">
+						<p class="text-sm text-carbon-400 mb-1">Difference</p>
+						<p class="text-2xl font-mono font-bold {status.delta <= 0 ? 'text-gauge-green' : 'text-gauge-red'}">
+							{status.delta > 0 ? '+' : ''}{formatNumber(Math.round(status.delta))} mi
 						</p>
-					{/if}
+					</div>
+				{/if}
+				<div class="card animate-slide-up stagger-5 text-center">
+					<p class="text-sm text-carbon-400 mb-1">Daily Rate</p>
+					<p class="text-2xl font-mono font-bold text-carbon-100">{formatNumber(status.daily_rate, 1)} mi</p>
 				</div>
 			</div>
-			<div class="h-[300px] sm:h-[400px]">
-				<canvas bind:this={chartCanvas}></canvas>
+		{:else}
+			<div class="card">
+				<p class="text-carbon-400">No vehicle selected. Please select a vehicle to view the graph.</p>
 			</div>
-		</div>
+		{/if}
+	{:else}
+		{#if fleet.length < 2}
+			<div class="card">
+				<h2 class="text-lg font-semibold text-carbon-100 mb-2">Need two vehicles to compare</h2>
+				<p class="text-carbon-400">
+					Add another vehicle to compare normalized mileage across your fleet.
+				</p>
+			</div>
+		{:else}
+			<div class="card animate-slide-up mb-6">
+				<div class="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
+					<div class="flex-1 min-w-0">
+						<label class="label" for="compare-a">Vehicle A</label>
+						<select
+							id="compare-a"
+							class="input"
+							bind:value={compareA}
+							on:change={updateCompareA}
+						>
+							{#each fleet as vehicle}
+								<option value={vehicle.id} disabled={vehicle.id === compareB}>
+									{displayName(vehicle)}
+								</option>
+							{/each}
+						</select>
+					</div>
+					<div class="flex-1 min-w-0">
+						<label class="label" for="compare-b">Vehicle B</label>
+						<select
+							id="compare-b"
+							class="input"
+							bind:value={compareB}
+							on:change={updateCompareB}
+						>
+							{#each fleet as vehicle}
+								<option value={vehicle.id} disabled={vehicle.id === compareA}>
+									{displayName(vehicle)}
+								</option>
+							{/each}
+						</select>
+					</div>
+					<div class="text-sm text-carbon-500 max-w-sm">
+						Miles are normalized from each vehicle’s plan start, or first reading when no plan exists.
+					</div>
+				</div>
+			</div>
 
-		<!-- Stats Summary -->
-		<div class="grid {status.has_plan ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'} gap-4 mt-6">
-			<div class="card animate-slide-up stagger-3 text-center">
-				<p class="text-sm text-carbon-400 mb-1">Total Readings</p>
-				<p class="text-2xl font-mono font-bold text-carbon-100">{graphData.dates.length}</p>
-			</div>
-			{#if status.has_plan}
-				<div class="card animate-slide-up stagger-4 text-center">
-					<p class="text-sm text-carbon-400 mb-1">Difference</p>
-					<p class="text-2xl font-mono font-bold {status.delta <= 0 ? 'text-gauge-green' : 'text-gauge-red'}">
-						{status.delta > 0 ? '+' : ''}{formatNumber(Math.round(status.delta))} mi
-					</p>
+			{#if comparisonLoading}
+				<div class="flex items-center justify-center h-64">
+					<div class="animate-pulse text-carbon-400">Loading comparison...</div>
+				</div>
+			{:else if comparisonError}
+				<div class="card border-gauge-red/30 bg-gauge-red/5">
+					<p class="text-gauge-red">{comparisonError}</p>
+				</div>
+			{:else if compareReady}
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+					{#each compareSeries as series}
+						<div class="card animate-slide-up">
+							<div class="flex items-center gap-3">
+								<div class="w-4 h-4 rounded-full" style="background-color: {series.color}"></div>
+								<div>
+									<p class="text-sm text-carbon-400">{displayName(series.status)}</p>
+									<p class="text-lg font-mono font-semibold text-carbon-100">
+										{formatNumber(series.graph.actuals[series.graph.actuals.length - 1] || 0)} mi
+									</p>
+									<p class="text-xs text-carbon-500">
+										Since {series.originKind}: {formatDate(series.origin.toISOString())}
+									</p>
+								</div>
+							</div>
+						</div>
+					{/each}
+				</div>
+
+				<div class="card animate-slide-up stagger-2">
+					<div class="flex flex-wrap items-start justify-between gap-4 mb-4">
+						<div>
+							<h2 class="text-lg font-semibold text-carbon-100">Two-car comparison</h2>
+							<p class="text-sm text-carbon-500 mt-1">
+								Miles driven since each vehicle’s own origin, aligned by elapsed day and month.
+							</p>
+						</div>
+					</div>
+					<div class="h-[300px] sm:h-[400px]">
+						<canvas bind:this={chartCanvas}></canvas>
+					</div>
 				</div>
 			{/if}
-			<div class="card animate-slide-up stagger-5 text-center">
-				<p class="text-sm text-carbon-400 mb-1">Daily Rate</p>
-				<p class="text-2xl font-mono font-bold text-carbon-100">{formatNumber(status.daily_rate, 1)} mi</p>
-			</div>
-		</div>
-	{:else}
-		<div class="card">
-			<p class="text-carbon-400">No vehicle selected. Please select a vehicle to view the graph.</p>
-		</div>
+		{/if}
 	{/if}
 </div>
