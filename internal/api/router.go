@@ -80,6 +80,7 @@ func registerDataRoutes(mux *http.ServeMux, s *Server, data middleware) {
 	mux.Handle("DELETE /api/v1/vehicles/{id}/readings/{date}", d(s.HandleDeleteReading))
 	mux.Handle("GET /api/v1/vehicles/{id}/graph", d(s.HandleGetGraphData))
 	mux.Handle("GET /api/v1/vehicles/{id}/export", d(s.HandleExportCSV))
+	mux.Handle("POST /api/v1/vehicles/{id}/import", d(s.HandleImportCSV))
 	mux.Handle("GET /api/v1/current", d(s.HandleGetCurrent))
 	mux.Handle("PUT /api/v1/current", d(s.HandleSetCurrent))
 	mux.Handle("GET /api/v1/fleet", d(s.HandleFleet))

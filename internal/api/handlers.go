@@ -36,15 +36,22 @@ type apiErrorResponse struct {
 type apiError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Details carries per-row problems for CSV import; empty elsewhere.
+	Details []readings.RowError `json:"details,omitempty"`
 }
 
 func writeValidationError(w http.ResponseWriter, code, message string) {
+	writeValidationErrorDetails(w, code, message, nil)
+}
+
+func writeValidationErrorDetails(w http.ResponseWriter, code, message string, details []readings.RowError) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	json.NewEncoder(w).Encode(apiErrorResponse{
 		Error: apiError{
 			Code:    code,
 			Message: message,
+			Details: details,
 		},
 	})
 }
@@ -526,6 +533,60 @@ func (s *Server) HandleFleet(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// maxImportBytes caps the import request body. Years of daily readings is
+// ~20 KB, so 1 MB is generous while still bounding hosted-mode uploads.
+const maxImportBytes = 1 << 20
+
+// HandleImportCSV bulk-imports readings from a CSV body in the exact format
+// HandleExportCSV writes (round-trip guarantee). All-or-nothing: any invalid
+// row rejects the whole file with every error line-numbered. Existing dates
+// are skipped unless ?overwrite=true; the merged set must be monotonic by
+// date unless ?force=true. One SaveVehicle write keeps the import atomic.
+func (s *Server) HandleImportCSV(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "vehicle ID required", http.StatusBadRequest)
+		return
+	}
+	overwrite := r.URL.Query().Get("overwrite") == "true"
+	force := r.URL.Query().Get("force") == "true"
+
+	data, err := storeFrom(r.Context()).GetVehicle(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	rows, rowErrs := readings.ParseCSV(http.MaxBytesReader(w, r.Body, maxImportBytes))
+	if len(rowErrs) > 0 {
+		writeValidationErrorDetails(w, "invalid_csv",
+			fmt.Sprintf("CSV has %d invalid row(s); nothing was imported", len(rowErrs)), rowErrs)
+		return
+	}
+
+	merged, report := readings.Merge(data.Readings, rows, overwrite)
+	if !force {
+		if err := readings.CheckMonotonic(merged); err != nil {
+			writeValidationError(w, "not_monotonic", err.Error()+"; set force=true to override")
+			return
+		}
+	}
+
+	data.Readings = merged
+	if err := storeFrom(r.Context()).SaveVehicle(r.Context(), id, data); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":      "imported",
+		"added":       report.Added,
+		"skipped":     report.Skipped,
+		"overwritten": report.Overwritten,
+	})
 }
 
 // HandleExportCSV exports readings as CSV

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -477,5 +478,187 @@ func TestUnversionedPathsAreGone(t *testing.T) {
 		if ct := resp.Header.Get("Content-Type"); ct == "application/json" {
 			t.Fatal("unversioned /api/vehicles still serves the JSON API")
 		}
+	}
+}
+
+// --- CSV import ---
+
+func importCSV(t *testing.T, srv *httptest.Server, id, query, body string) *http.Response {
+	t.Helper()
+	resp, err := http.Post(srv.URL+"/api/v1/vehicles/"+id+"/import"+query, "text/csv", bytes.NewBufferString(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func TestImportCSVSuccess(t *testing.T) {
+	srv, st := newTestServer(t, map[string]*model.VehicleData{"golf": sampleVehicle()})
+
+	resp := importCSV(t, srv, "golf", "", "date,miles\n2025-02-01,5400\n2025-03-01,5900\n")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("want 200, got %d: %s", resp.StatusCode, body)
+	}
+	var report struct {
+		Status      string `json:"status"`
+		Added       int    `json:"added"`
+		Skipped     int    `json:"skipped"`
+		Overwritten int    `json:"overwritten"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "imported" || report.Added != 2 || report.Skipped != 0 {
+		t.Fatalf("unexpected report: %+v", report)
+	}
+	data, _ := st.GetVehicle(context.Background(), "golf")
+	if data.Readings["2025-03-01"] != 5900 || len(data.Readings) != 3 {
+		t.Fatalf("readings not persisted: %+v", data.Readings)
+	}
+}
+
+func TestImportCSVMalformedRejectsAllWithLineDetails(t *testing.T) {
+	srv, st := newTestServer(t, map[string]*model.VehicleData{"golf": sampleVehicle()})
+
+	resp := importCSV(t, srv, "golf", "", "date,miles\n2025-02-01,5400\nnot-a-date,5500\n")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", resp.StatusCode)
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Details []struct {
+				Line    int    `json:"line"`
+				Message string `json:"message"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Error.Code != "invalid_csv" || len(body.Error.Details) != 1 || body.Error.Details[0].Line != 3 {
+		t.Fatalf("unexpected error body: %+v", body)
+	}
+	// All-or-nothing: the valid row must not have been persisted either.
+	data, _ := st.GetVehicle(context.Background(), "golf")
+	if _, ok := data.Readings["2025-02-01"]; ok {
+		t.Fatal("valid row from a rejected file was persisted")
+	}
+}
+
+func TestImportCSVMissingVehicle404(t *testing.T) {
+	srv, _ := newTestServer(t, nil)
+
+	resp := importCSV(t, srv, "ghost", "", "date,miles\n2025-02-01,5400\n")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestImportCSVSkipVsOverwrite(t *testing.T) {
+	seed := sampleVehicle() // has 2025-01-01: 5000
+	srv, st := newTestServer(t, map[string]*model.VehicleData{"golf": seed})
+
+	// Default: existing wins, conflicting row skipped.
+	resp := importCSV(t, srv, "golf", "", "date,miles\n2025-01-01,4900\n")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("skip import: want 200, got %d", resp.StatusCode)
+	}
+	data, _ := st.GetVehicle(context.Background(), "golf")
+	if data.Readings["2025-01-01"] != 5000 {
+		t.Fatalf("existing reading clobbered without overwrite: %+v", data.Readings)
+	}
+
+	// overwrite=true replaces it.
+	resp = importCSV(t, srv, "golf", "?overwrite=true", "date,miles\n2025-01-01,4900\n")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("overwrite import: want 200, got %d", resp.StatusCode)
+	}
+	var report struct {
+		Overwritten int `json:"overwritten"`
+	}
+	json.NewDecoder(resp.Body).Decode(&report)
+	if report.Overwritten != 1 {
+		t.Fatalf("want overwritten=1, got %+v", report)
+	}
+	data, _ = st.GetVehicle(context.Background(), "golf")
+	if data.Readings["2025-01-01"] != 4900 {
+		t.Fatalf("overwrite did not persist: %+v", data.Readings)
+	}
+}
+
+func TestImportCSVMonotonicViolationNeedsForce(t *testing.T) {
+	srv, st := newTestServer(t, map[string]*model.VehicleData{"golf": sampleVehicle()})
+
+	// 2025-02-01 below the existing 2025-01-01 reading.
+	csvBody := "date,miles\n2025-02-01,4000\n"
+	resp := importCSV(t, srv, "golf", "", csvBody)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", resp.StatusCode)
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body.Error.Code != "not_monotonic" {
+		t.Fatalf("want not_monotonic, got %+v", body)
+	}
+	data, _ := st.GetVehicle(context.Background(), "golf")
+	if _, ok := data.Readings["2025-02-01"]; ok {
+		t.Fatal("rejected import was persisted")
+	}
+
+	resp2 := importCSV(t, srv, "golf", "?force=true", csvBody)
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("forced import: want 200, got %d", resp2.StatusCode)
+	}
+	data, _ = st.GetVehicle(context.Background(), "golf")
+	if data.Readings["2025-02-01"] != 4000 {
+		t.Fatalf("forced import not persisted: %+v", data.Readings)
+	}
+}
+
+// Round-trip guarantee: the export endpoint's body imported into a fresh
+// vehicle reproduces identical readings.
+func TestExportImportRoundTrip(t *testing.T) {
+	source := sampleVehicle()
+	source.Readings = map[string]int{
+		"2025-01-01": 5000,
+		"2025-03-15": 6210,
+		"2025-06-30": 7345,
+	}
+	srv, st := newTestServer(t, map[string]*model.VehicleData{
+		"golf":  source,
+		"fresh": {Vehicle: "Fresh", Readings: map[string]int{}},
+	})
+
+	exportResp, err := http.Get(srv.URL + "/api/v1/vehicles/golf/export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, _ := io.ReadAll(exportResp.Body)
+	exportResp.Body.Close()
+
+	resp := importCSV(t, srv, "fresh", "", string(exported))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("round-trip import: want 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	got, _ := st.GetVehicle(context.Background(), "fresh")
+	want, _ := st.GetVehicle(context.Background(), "golf")
+	if !reflect.DeepEqual(got.Readings, want.Readings) {
+		t.Fatalf("round-trip mismatch:\n got %v\nwant %v", got.Readings, want.Readings)
 	}
 }
