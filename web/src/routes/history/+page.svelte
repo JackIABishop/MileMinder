@@ -99,20 +99,20 @@
 	<title>History | MileMinder</title>
 </svelte:head>
 
-<div class="p-8">
-	<header class="mb-8 animate-fade-in flex items-start justify-between">
+<div class="p-4 sm:p-6 lg:p-8">
+	<header class="mb-8 animate-fade-in flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
 		<div>
 			<h1 class="text-3xl font-display font-bold text-carbon-100">Reading History</h1>
 			<p class="text-carbon-500 mt-2">View and manage your odometer readings</p>
 		</div>
 		{#if status}
-			<div class="flex items-center gap-3">
+			<div class="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center lg:w-auto lg:justify-end">
 				<label class="flex items-center gap-1.5 text-sm text-carbon-400 cursor-pointer" title="Replace existing readings on dates the CSV also contains">
 					<input type="checkbox" bind:checked={importOverwrite} class="accent-carbon-400" />
 					Overwrite
 				</label>
 				<button
-					class="btn-secondary flex items-center gap-2"
+					class="btn-secondary flex w-full items-center justify-center gap-2 sm:w-auto"
 					on:click={() => fileInput.click()}
 					disabled={importing}
 				>
@@ -131,7 +131,7 @@
 				<a
 					href={getExportURL(status.id)}
 					download="{status.id}_readings.csv"
-					class="btn-secondary flex items-center gap-2"
+					class="btn-secondary flex w-full items-center justify-center gap-2 sm:w-auto"
 				>
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -190,7 +190,7 @@
 		</div>
 	{:else}
 		<!-- Stats -->
-		<div class="grid grid-cols-3 gap-4 mb-6">
+		<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
 			<div class="card animate-slide-up">
 				<p class="text-sm text-carbon-400 mb-1">Total Readings</p>
 				<p class="text-2xl font-mono font-bold text-carbon-100">{readings.length}</p>
@@ -208,7 +208,7 @@
 		<!-- Table -->
 		<div class="card animate-slide-up stagger-3 overflow-hidden">
 			<div class="overflow-x-auto">
-				<table class="w-full">
+				<table class="w-full min-w-[44rem]">
 					<thead>
 						<tr class="border-b border-carbon-800">
 							<th class="text-left py-3 px-4 text-sm font-medium text-carbon-400">Date</th>

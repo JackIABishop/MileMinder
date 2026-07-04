@@ -71,7 +71,7 @@
 	<title>Fleet | MileMinder</title>
 </svelte:head>
 
-<div class="p-8">
+<div class="p-4 sm:p-6 lg:p-8">
 	<header class="mb-8 animate-fade-in">
 		<h1 class="text-3xl font-display font-bold text-carbon-100">Fleet Overview</h1>
 		<p class="text-carbon-500 mt-2">Monitor all your vehicles at a glance</p>
@@ -97,10 +97,10 @@
 	{:else}
 		<!-- Household roll-up -->
 		{#if insights}
-			<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+			<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
 				<div class="card animate-slide-up">
 					<p class="text-sm text-carbon-400 mb-1">Household over/under</p>
-					<p class="text-3xl font-mono font-bold {insights.net_delta > 0 ? 'text-gauge-red' : 'text-gauge-green'}">
+					<p class="text-2xl sm:text-3xl font-mono font-bold {insights.net_delta > 0 ? 'text-gauge-red' : 'text-gauge-green'}">
 						{insights.net_delta > 0 ? '+' : ''}{formatNumber(Math.round(insights.net_delta))}<span class="text-base text-carbon-500"> mi</span>
 					</p>
 					<p class="text-xs text-carbon-500 mt-1">
@@ -109,7 +109,7 @@
 				</div>
 				<div class="card animate-slide-up stagger-1">
 					<p class="text-sm text-carbon-400 mb-1">Total annual mileage</p>
-					<p class="text-3xl font-mono font-bold text-carbon-100">
+					<p class="text-2xl sm:text-3xl font-mono font-bold text-carbon-100">
 						{formatNumber(Math.round(insights.total_avg_annual_mileage))}<span class="text-base text-carbon-500"> mi/yr</span>
 					</p>
 					<p class="text-xs text-carbon-500 mt-1">Lifetime average, all cars</p>
@@ -117,7 +117,7 @@
 				</div>
 				<div class="card animate-slide-up stagger-2">
 					<p class="text-sm text-carbon-400 mb-1">Fleet avg pace</p>
-					<p class="text-3xl font-mono font-bold text-carbon-100">
+					<p class="text-2xl sm:text-3xl font-mono font-bold text-carbon-100">
 						{Math.round(insights.avg_percent_used)}<span class="text-base text-carbon-500">%</span>
 					</p>
 					<p class="text-xs text-carbon-500 mt-1">Mean allowance used, policy cars only</p>
@@ -226,7 +226,7 @@
 						</div>
 					{/if}
 
-					<div class="mt-4 pt-4 border-t border-carbon-800 flex items-center justify-between gap-3">
+					<div class="mt-4 pt-4 border-t border-carbon-800 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 						<button class="btn-primary text-sm" on:click={() => viewVehicle(vehicle.id)}>
 							View
 						</button>
@@ -244,7 +244,7 @@
 					</div>
 
 					<div class="mt-3 pt-3 border-t border-carbon-800">
-						<div class="flex justify-between text-xs text-carbon-500">
+						<div class="flex flex-col gap-1 text-xs text-carbon-500 sm:flex-row sm:justify-between">
 							{#if vehicle.has_plan}
 								<span>Plan: {formatDate(vehicle.plan_start)} → {formatDate(vehicle.plan_end)}</span>
 								<span>{formatNumber(vehicle.annual_allowance)} mi/yr</span>

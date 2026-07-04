@@ -66,7 +66,7 @@
 	<title>Add Mileage | MileMinder</title>
 </svelte:head>
 
-<div class="p-8 max-w-2xl mx-auto">
+<div class="p-4 sm:p-6 lg:p-8 max-w-2xl mx-auto">
 	<header class="mb-8 animate-fade-in">
 		<h1 class="text-3xl font-display font-bold text-carbon-100">Add Mileage</h1>
 		<p class="text-carbon-500 mt-2">Record your current odometer reading</p>
@@ -83,12 +83,12 @@
 	{:else}
 		<!-- Current Status -->
 		<div class="card mb-6 animate-slide-up">
-			<div class="flex items-center justify-between">
+			<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 				<div>
 					<p class="text-sm text-carbon-400">Current odometer</p>
-					<p class="text-3xl font-mono font-bold text-carbon-100">{formatNumber(status.latest_reading)} <span class="text-lg text-carbon-500">mi</span></p>
+					<p class="text-2xl sm:text-3xl font-mono font-bold text-carbon-100">{formatNumber(status.latest_reading)} <span class="text-lg text-carbon-500">mi</span></p>
 				</div>
-				<div class="text-right">
+				<div class="text-left sm:text-right">
 					<p class="text-sm text-carbon-400">Vehicle</p>
 					<p class="text-lg font-medium text-carbon-100">{status.vehicle || status.id}</p>
 				</div>

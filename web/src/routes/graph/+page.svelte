@@ -324,7 +324,7 @@
 	<title>Graph | MileMinder</title>
 </svelte:head>
 
-<div class="p-8">
+<div class="p-4 sm:p-6 lg:p-8">
 	<header class="mb-8 animate-fade-in">
 		<h1 class="text-3xl font-display font-bold text-carbon-100">Mileage Graph</h1>
 		<p class="text-carbon-500 mt-2">Track your actual usage against the ideal allowance</p>
@@ -340,7 +340,7 @@
 		</div>
 	{:else if status && graphData}
 		<!-- Legend Info -->
-		<div class="grid {status.has_plan ? 'grid-cols-2' : 'grid-cols-1'} gap-4 mb-6">
+		<div class="grid {status.has_plan ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} gap-4 mb-6">
 			<div class="card animate-slide-up">
 				<div class="flex items-center gap-3">
 					<div class="w-4 h-4 rounded-full bg-gauge-green"></div>
@@ -369,9 +369,9 @@
 
 		<!-- Chart -->
 		<div class="card animate-slide-up stagger-2">
-			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-lg font-semibold text-carbon-100">{status.vehicle || status.id}</h2>
-				<div class="flex items-center gap-4">
+			<div class="flex flex-col gap-4 mb-4 lg:flex-row lg:items-center lg:justify-between">
+				<h2 class="text-lg font-semibold text-carbon-100 break-words">{status.vehicle || status.id}</h2>
+				<div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4 lg:justify-end">
 					{#if status.has_plan}
 						<label class="flex items-center gap-2 text-sm text-carbon-400 cursor-pointer select-none">
 							<input
@@ -397,13 +397,13 @@
 					{/if}
 				</div>
 			</div>
-			<div class="h-[400px]">
+			<div class="h-[300px] sm:h-[400px]">
 				<canvas bind:this={chartCanvas}></canvas>
 			</div>
 		</div>
 
 		<!-- Stats Summary -->
-		<div class="grid {status.has_plan ? 'grid-cols-3' : 'grid-cols-2'} gap-4 mt-6">
+		<div class="grid {status.has_plan ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'} gap-4 mt-6">
 			<div class="card animate-slide-up stagger-3 text-center">
 				<p class="text-sm text-carbon-400 mb-1">Total Readings</p>
 				<p class="text-2xl font-mono font-bold text-carbon-100">{graphData.dates.length}</p>
