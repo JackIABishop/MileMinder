@@ -275,6 +275,77 @@ export function getExportURL(vehicleId: string): string {
 	return `${API_BASE}/vehicles/${encodeURIComponent(vehicleId)}/export`;
 }
 
+// CSV import (round-trips with the export format: header "date,miles",
+// then YYYY-MM-DD,<miles> rows).
+export interface ImportResult {
+	status: string;
+	added: number;
+	skipped: number;
+	overwritten: number;
+}
+
+export interface ImportRowError {
+	line: number;
+	message: string;
+}
+
+// ImportError keeps the server's per-row problems (line numbers) so the UI
+// can list them, which a flat Error message can't carry.
+export class ImportError extends Error {
+	code: string;
+	details: ImportRowError[];
+
+	constructor(code: string, message: string, details: ImportRowError[] = []) {
+		super(message);
+		this.name = 'ImportError';
+		this.code = code;
+		this.details = details;
+	}
+}
+
+export async function importCSV(
+	vehicleId: string,
+	csvText: string,
+	opts: { overwrite?: boolean; force?: boolean } = {}
+): Promise<ImportResult> {
+	const params = new URLSearchParams();
+	if (opts.overwrite) params.set('overwrite', 'true');
+	if (opts.force) params.set('force', 'true');
+	const query = params.size > 0 ? `?${params}` : '';
+
+	// Raw text/csv body, so this doesn't go through fetchJSON (which is
+	// JSON-only and drops structured error details).
+	const response = await fetch(
+		`${API_BASE}/vehicles/${encodeURIComponent(vehicleId)}/import${query}`,
+		{
+			method: 'POST',
+			headers: { 'Content-Type': 'text/csv' },
+			body: csvText
+		}
+	);
+
+	if (response.status === 401 && get(mode) === 'hosted') {
+		goto('/login');
+		throw new ImportError('unauthenticated', 'authentication required');
+	}
+
+	if (!response.ok) {
+		const text = await response.text();
+		let parsed: any = null;
+		try {
+			parsed = JSON.parse(text);
+		} catch {
+			parsed = null;
+		}
+		if (parsed?.error?.message) {
+			throw new ImportError(parsed.error.code ?? '', parsed.error.message, parsed.error.details ?? []);
+		}
+		throw new ImportError('', text || `HTTP ${response.status}`);
+	}
+
+	return response.json();
+}
+
 // Utility functions
 export function formatDate(dateString: string): string {
 	if (!dateString) return '-';

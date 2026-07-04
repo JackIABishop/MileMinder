@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, type VehicleListItem, type VehicleStatus } from '$lib/api';
+	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, importCSV, type VehicleListItem, type VehicleStatus } from '$lib/api';
 	import { mode, user, logout } from '$lib/auth';
 
 	async function handleLogout() {
@@ -33,7 +33,9 @@
 		excess_rate: number;
 	}> = {};
 
-	// New vehicle form
+	// New vehicle form. historyFiles is the optional readings CSV imported
+	// right after creation (create-with-history composes the two API calls).
+	let historyFiles: FileList | null = null;
 	let newVehicle = {
 		id: '',
 		vehicle: '',
@@ -185,9 +187,24 @@
 				annual_allowance: newVehicle.annual_allowance,
 				excess_rate: newVehicle.excess_rate
 			} : payload);
-			
+
 			success = `Vehicle "${newVehicle.vehicle || newVehicle.id}" created successfully!`;
+
+			// Optional history import, composed after create. The vehicle exists
+			// even if this fails, so the error message must say so.
+			const historyFile = historyFiles?.[0];
+			if (historyFile) {
+				try {
+					const result = await importCSV(payload.id, await historyFile.text());
+					success = `Vehicle "${newVehicle.vehicle || newVehicle.id}" created and ${result.added} historical reading${result.added === 1 ? '' : 's'} imported.`;
+				} catch (e) {
+					success = '';
+					error = `Vehicle created, but history import failed: ${e instanceof Error ? e.message : 'unknown error'}. You can retry from the History page.`;
+				}
+			}
+
 			showAddForm = false;
+			historyFiles = null;
 			newVehicle = {
 				id: '',
 				vehicle: '',
@@ -209,6 +226,7 @@
 	function resetForm() {
 		showAddForm = false;
 		error = '';
+		historyFiles = null;
 		newVehicle = {
 			id: '',
 			vehicle: '',
@@ -502,6 +520,18 @@
 									required
 								/>
 							</div>
+						</div>
+
+						<div>
+							<label for="historyCsv" class="label">Import history (CSV, optional)</label>
+							<input
+								type="file"
+								id="historyCsv"
+								accept=".csv,text/csv"
+								bind:files={historyFiles}
+								class="input"
+							/>
+							<p class="text-xs text-carbon-500 mt-1">Readings in the export format (date,miles) are imported right after the vehicle is created</p>
 						</div>
 
 						{#if newVehicle.has_plan}
