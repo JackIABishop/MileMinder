@@ -172,9 +172,8 @@ func (s *Server) HandleGetVehicle(w http.ResponseWriter, r *http.Request) {
 
 // HandleCreateVehicle creates a new vehicle.
 //
-// SaveVehicle is an upsert, so this currently overwrites an existing vehicle of
-// the same id (unchanged from prior behaviour). Rejecting duplicates with a 409
-// is tracked separately in #31.
+// SaveVehicle is an upsert, so create guards against an existing id before
+// saving to avoid replacing a vehicle's plan and readings.
 func (s *Server) HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID              string     `json:"id"`
@@ -234,7 +233,23 @@ func (s *Server) HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := storeFrom(r.Context()).SaveVehicle(r.Context(), req.ID, data); err != nil {
+	st := storeFrom(r.Context())
+	if _, err := st.GetVehicle(r.Context(), req.ID); err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(apiErrorResponse{
+			Error: apiError{
+				Code:    "vehicle_already_exists",
+				Message: "vehicle already exists",
+			},
+		})
+		return
+	} else if !errors.Is(err, storage.ErrNotFound) {
+		writeStoreError(w, err)
+		return
+	}
+
+	if err := st.SaveVehicle(r.Context(), req.ID, data); err != nil {
 		writeStoreError(w, err)
 		return
 	}
