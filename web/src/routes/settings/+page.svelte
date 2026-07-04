@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, importCSV, type VehicleListItem, type VehicleStatus } from '$lib/api';
+	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, importCSV, changePassword, type VehicleListItem, type VehicleStatus } from '$lib/api';
 	import { mode, user, logout } from '$lib/auth';
 
 	async function handleLogout() {
@@ -18,6 +18,10 @@
 	let alertPrefs = { enabled: true, threshold: 100 };
 	let loadingAlerts = false;
 	let savingAlerts = false;
+	let currentPassword = '';
+	let newPassword = '';
+	let confirmPassword = '';
+	let changingPassword = false;
 
 	// Per-vehicle excess rate (pence/excess mile), loaded from each vehicle's status.
 	let excessRates: Record<string, number> = {};
@@ -81,6 +85,31 @@
 			error = e instanceof Error ? e.message : 'Failed to update alert preferences';
 		} finally {
 			savingAlerts = false;
+		}
+	}
+
+	async function handleChangePassword() {
+		error = '';
+		success = '';
+		if (newPassword.length < 8) {
+			error = 'New password must be at least 8 characters';
+			return;
+		}
+		if (newPassword !== confirmPassword) {
+			error = 'New passwords do not match';
+			return;
+		}
+		changingPassword = true;
+		try {
+			await changePassword(currentPassword, newPassword);
+			currentPassword = '';
+			newPassword = '';
+			confirmPassword = '';
+			success = 'Password changed.';
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to change password';
+		} finally {
+			changingPassword = false;
 		}
 	}
 
@@ -272,6 +301,51 @@
 				</div>
 				<button class="btn-secondary" on:click={handleLogout}>Sign out</button>
 			</div>
+			<form on:submit|preventDefault={handleChangePassword} class="mt-4 p-4 bg-carbon-900/40 border border-carbon-800 rounded-xl">
+				<h3 class="text-base font-semibold text-carbon-100 mb-4">Change password</h3>
+				<div class="grid gap-4 md:grid-cols-3">
+					<div>
+						<label for="currentPassword" class="label">Current password</label>
+						<input
+							id="currentPassword"
+							type="password"
+							bind:value={currentPassword}
+							autocomplete="current-password"
+							class="input"
+							required
+						/>
+					</div>
+					<div>
+						<label for="newPassword" class="label">New password</label>
+						<input
+							id="newPassword"
+							type="password"
+							bind:value={newPassword}
+							autocomplete="new-password"
+							class="input"
+							minlength="8"
+							required
+						/>
+					</div>
+					<div>
+						<label for="confirmPassword" class="label">Confirm password</label>
+						<input
+							id="confirmPassword"
+							type="password"
+							bind:value={confirmPassword}
+							autocomplete="new-password"
+							class="input"
+							minlength="8"
+							required
+						/>
+					</div>
+				</div>
+				<div class="mt-4 flex justify-end">
+					<button class="btn-secondary" type="submit" disabled={changingPassword}>
+						{changingPassword ? 'Changing...' : 'Change password'}
+					</button>
+				</div>
+			</form>
 		</section>
 
 		<section class="mb-8">

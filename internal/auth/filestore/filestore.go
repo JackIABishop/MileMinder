@@ -148,6 +148,23 @@ func (s *UserStore) ListUsers(ctx context.Context) ([]*auth.User, error) {
 	return out, nil
 }
 
+func (s *UserStore) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	users, err := s.load()
+	if err != nil {
+		return err
+	}
+	for _, u := range users {
+		if u.ID == userID {
+			u.PasswordHash = passwordHash
+			return s.save(users)
+		}
+	}
+	return auth.ErrNotFound
+}
+
 // SessionStore is a file-backed auth.SessionStore.
 type SessionStore struct {
 	path string
@@ -254,6 +271,24 @@ func (s *SessionStore) DeleteSession(ctx context.Context, tokenHash string) erro
 	return s.save(kept)
 }
 
+func (s *SessionStore) DeleteUserSessions(ctx context.Context, userID, exceptTokenHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	sessions, err := s.load()
+	if err != nil {
+		return err
+	}
+	kept := make([]*auth.Session, 0, len(sessions))
+	for _, sess := range sessions {
+		if sess.UserID == userID && (exceptTokenHash == "" || sess.TokenHash != exceptTokenHash) {
+			continue
+		}
+		kept = append(kept, sess)
+	}
+	return s.save(kept)
+}
+
 func (s *SessionStore) TouchSession(ctx context.Context, tokenHash string, expires time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -276,8 +311,133 @@ func (s *SessionStore) TouchSession(ctx context.Context, tokenHash string, expir
 	return s.save(sessions)
 }
 
+// PasswordResetStore is a file-backed auth.PasswordResetStore.
+type PasswordResetStore struct {
+	path string
+	mu   sync.Mutex
+}
+
+// NewPasswordResetStore returns a PasswordResetStore backed by <root>/resets.yml.
+func NewPasswordResetStore(root string) *PasswordResetStore {
+	return &PasswordResetStore{path: filepath.Join(root, "resets.yml")}
+}
+
+type resetsDoc struct {
+	Resets []*auth.PasswordReset `yaml:"resets"`
+}
+
+func (s *PasswordResetStore) load() ([]*auth.PasswordReset, error) {
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read resets file: %w", err)
+	}
+	var doc resetsDoc
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("parse resets file: %w", err)
+	}
+	return doc.Resets, nil
+}
+
+func (s *PasswordResetStore) save(resets []*auth.PasswordReset) error {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
+	return atomicfile.Write(s.path, 0600, func(f *os.File) error {
+		enc := yaml.NewEncoder(f)
+		if err := enc.Encode(resetsDoc{Resets: resets}); err != nil {
+			enc.Close()
+			return err
+		}
+		return enc.Close()
+	})
+}
+
+func pruneResets(resets []*auth.PasswordReset, now time.Time) []*auth.PasswordReset {
+	kept := resets[:0]
+	for _, reset := range resets {
+		if now.Before(reset.ExpiresAt) {
+			kept = append(kept, reset)
+		}
+	}
+	return kept
+}
+
+func (s *PasswordResetStore) CreateReset(ctx context.Context, tokenHash, userID string, expires time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resets, err := s.load()
+	if err != nil {
+		return err
+	}
+	resets = pruneResets(resets, time.Now())
+	kept := make([]*auth.PasswordReset, 0, len(resets)+1)
+	for _, reset := range resets {
+		if reset.UserID != userID {
+			kept = append(kept, reset)
+		}
+	}
+	kept = append(kept, &auth.PasswordReset{TokenHash: tokenHash, UserID: userID, ExpiresAt: expires})
+	return s.save(kept)
+}
+
+func (s *PasswordResetStore) ConsumeReset(ctx context.Context, tokenHash string) (*auth.PasswordReset, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resets, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	var found *auth.PasswordReset
+	kept := make([]*auth.PasswordReset, 0, len(resets))
+	now := time.Now()
+	for _, reset := range resets {
+		if reset.TokenHash == tokenHash {
+			found = reset
+			continue
+		}
+		if now.Before(reset.ExpiresAt) {
+			kept = append(kept, reset)
+		}
+	}
+	if found == nil {
+		return nil, auth.ErrNotFound
+	}
+	if err := s.save(kept); err != nil {
+		return nil, err
+	}
+	if now.After(found.ExpiresAt) {
+		return nil, auth.ErrNotFound
+	}
+	cp := *found
+	return &cp, nil
+}
+
+func (s *PasswordResetStore) DeleteResetsForUser(ctx context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	resets, err := s.load()
+	if err != nil {
+		return err
+	}
+	resets = pruneResets(resets, time.Now())
+	kept := make([]*auth.PasswordReset, 0, len(resets))
+	for _, reset := range resets {
+		if reset.UserID != userID {
+			kept = append(kept, reset)
+		}
+	}
+	return s.save(kept)
+}
+
 // Compile-time assertions.
 var (
-	_ auth.UserStore    = (*UserStore)(nil)
-	_ auth.SessionStore = (*SessionStore)(nil)
+	_ auth.UserStore          = (*UserStore)(nil)
+	_ auth.SessionStore       = (*SessionStore)(nil)
+	_ auth.PasswordResetStore = (*PasswordResetStore)(nil)
 )

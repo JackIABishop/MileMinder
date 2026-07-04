@@ -84,6 +84,7 @@ func hostedHandler(cmd *cobra.Command, devMode bool, url string) (http.Handler, 
 	if err != nil {
 		return nil, err
 	}
+	baseURL := hostedBaseURL(cmd, url)
 	secure, _ := cmd.Flags().GetBool("secure-cookies")
 	channel, err := notificationChannel()
 	if err != nil {
@@ -96,8 +97,10 @@ func hostedHandler(cmd *cobra.Command, devMode bool, url string) (http.Handler, 
 	cfg := api.HostedConfig{
 		Users:         users,
 		Sessions:      filestore.NewSessionStore(dataDir),
+		Resets:        filestore.NewPasswordResetStore(dataDir),
 		Tenants:       tenants,
 		Notifier:      channel,
+		BaseURL:       baseURL,
 		AlertPrefs:    alertPrefs,
 		SecureCookies: secure,
 	}
@@ -121,7 +124,7 @@ func hostedHandler(cmd *cobra.Command, devMode bool, url string) (http.Handler, 
 			Channel:  channel,
 			Now:      time.Now,
 			Interval: interval,
-			BaseURL:  url,
+			BaseURL:  baseURL,
 			Logger:   log.Default(),
 		}
 		go scheduler.Run(cmd.Context())
@@ -166,6 +169,18 @@ func hostedDataDir(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("locate home directory: %w", err)
 	}
 	return filepath.Join(home, ".mileminder-hosted"), nil
+}
+
+func hostedBaseURL(cmd *cobra.Command, fallback string) string {
+	if cmd.Flags().Changed("base-url") {
+		if baseURL, _ := cmd.Flags().GetString("base-url"); baseURL != "" {
+			return baseURL
+		}
+	}
+	if baseURL := os.Getenv("MILEMINDER_BASE_URL"); baseURL != "" {
+		return baseURL
+	}
+	return fallback
 }
 
 func alertsInterval(cmd *cobra.Command) (time.Duration, error) {
@@ -226,6 +241,7 @@ func init() {
 	serveCmd.Flags().Bool("dev", false, "Development mode (API only, no static files)")
 	serveCmd.Flags().Bool("hosted", false, "Hosted multi-user mode: require login, isolate data per user (env: MILEMINDER_HOSTED)")
 	serveCmd.Flags().String("data-dir", "", "Hosted-mode data root (default ~/.mileminder-hosted; env: MILEMINDER_DATA_DIR)")
+	serveCmd.Flags().String("base-url", "", "Public hosted base URL for links in emails (env: MILEMINDER_BASE_URL)")
 	serveCmd.Flags().Bool("secure-cookies", true, "Set the Secure flag on session cookies (disable only for plain-HTTP localhost testing)")
 	serveCmd.Flags().Duration("alerts-interval", time.Hour, "Hosted alert scheduler interval (env: MILEMINDER_ALERTS_INTERVAL)")
 	serveCmd.Flags().Bool("no-alerts", false, "Disable the hosted alert scheduler")

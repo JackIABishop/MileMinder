@@ -22,6 +22,12 @@ func TestFileSessionStoreConformance(t *testing.T) {
 	})
 }
 
+func TestFilePasswordResetStoreConformance(t *testing.T) {
+	authtest.RunPasswordResetStore(t, func(t *testing.T) auth.PasswordResetStore {
+		return filestore.NewPasswordResetStore(t.TempDir())
+	})
+}
+
 // A user written by one store handle must be visible to a fresh handle over the
 // same directory — i.e. the data actually persists to disk.
 func TestFileUserStorePersistsAcrossReopen(t *testing.T) {

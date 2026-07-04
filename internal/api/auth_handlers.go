@@ -1,18 +1,23 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/jackiabishop/mileminder/internal/auth"
+	"github.com/jackiabishop/mileminder/internal/notify"
 )
 
 // minPasswordLen is the signup floor. Deliberately low — a length gate stops the
 // weakest passwords without pretending to be a strength meter.
 const minPasswordLen = 8
+
+const passwordResetTTL = time.Hour
 
 // authAPI holds the hosted-mode auth dependencies. checkPassword is a seam: it
 // defaults to auth.CheckPassword but tests substitute a counting wrapper to
@@ -20,6 +25,9 @@ const minPasswordLen = 8
 type authAPI struct {
 	users         auth.UserStore
 	sessions      auth.SessionStore
+	resets        auth.PasswordResetStore
+	notifier      notify.Channel
+	baseURL       string
 	checkPassword func(hash, password string) bool
 	secureCookies bool
 }
@@ -38,12 +46,33 @@ type authResponse struct {
 	User  *auth.User `json:"user"`
 }
 
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+type forgotPasswordRequest struct {
+	Email string `json:"email"`
+}
+
+type resetPasswordRequest struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+
 // validEmail is a deliberately loose sanity check: a single @ with non-empty
 // local and domain parts. Real deliverability verification is the Phase 4 email
 // channel's job, not a regex's.
 func validEmail(email string) bool {
 	local, domain, ok := strings.Cut(email, "@")
 	return ok && local != "" && domain != "" && !strings.Contains(domain, "@")
+}
+
+func validatePassword(password string) string {
+	if len(password) < minPasswordLen {
+		return "password must be at least 8 characters"
+	}
+	return ""
 }
 
 // HandleSignup creates an account and starts a session. It validates input
@@ -61,8 +90,8 @@ func (a *authAPI) HandleSignup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "a valid email address is required", http.StatusBadRequest)
 		return
 	}
-	if len(req.Password) < minPasswordLen {
-		http.Error(w, "password must be at least 8 characters", http.StatusBadRequest)
+	if msg := validatePassword(req.Password); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
 
@@ -117,6 +146,151 @@ func (a *authAPI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.startSessionResponse(w, r, user, http.StatusOK)
+}
+
+// HandleChangePassword changes the authenticated user's password. The current
+// session survives; every other session and outstanding reset link is revoked.
+func (a *authAPI) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
+	var req changePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	userID := userIDFrom(r.Context())
+	user, err := a.users.GetUserByID(r.Context(), userID)
+	if err != nil {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	if !a.checkPassword(user.PasswordHash, req.CurrentPassword) {
+		http.Error(w, "current password is incorrect", http.StatusUnauthorized)
+		return
+	}
+	if msg := validatePassword(req.NewPassword); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+	hash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		http.Error(w, "could not change password", http.StatusInternalServerError)
+		return
+	}
+	if err := a.users.UpdatePassword(r.Context(), userID, hash); err != nil {
+		http.Error(w, "could not change password", http.StatusInternalServerError)
+		return
+	}
+	if err := a.sessions.DeleteUserSessions(r.Context(), userID, tokenHashFrom(r.Context())); err != nil {
+		http.Error(w, "could not revoke old sessions", http.StatusInternalServerError)
+		return
+	}
+	if a.resets != nil {
+		if err := a.resets.DeleteResetsForUser(r.Context(), userID); err != nil {
+			http.Error(w, "could not revoke reset links", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "password changed"})
+}
+
+// HandleForgotPassword accepts an email address and, for existing accounts,
+// sends a reset link asynchronously. Valid-looking emails always receive the
+// same response so the endpoint does not reveal account existence.
+func (a *authAPI) HandleForgotPassword(w http.ResponseWriter, r *http.Request) {
+	var req forgotPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	email := auth.NormalizeEmail(req.Email)
+	if !validEmail(email) {
+		http.Error(w, "a valid email address is required", http.StatusBadRequest)
+		return
+	}
+	if a.resets == nil || a.notifier == nil {
+		http.Error(w, "password reset is not configured", http.StatusInternalServerError)
+		return
+	}
+
+	go a.sendPasswordReset(email)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (a *authAPI) sendPasswordReset(email string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	user, err := a.users.GetUserByEmail(ctx, email)
+	if err != nil {
+		if !errors.Is(err, auth.ErrNotFound) {
+			log.Printf("password reset lookup failed: %v", err)
+		}
+		return
+	}
+	token, tokenHash, err := auth.NewToken()
+	if err != nil {
+		log.Printf("password reset token generation failed for user %q: %v", user.ID, err)
+		return
+	}
+	if err := a.resets.CreateReset(ctx, tokenHash, user.ID, time.Now().Add(passwordResetTTL)); err != nil {
+		log.Printf("password reset store failed for user %q: %v", user.ID, err)
+		return
+	}
+	msg, err := renderPasswordResetMessage(a.baseURL, token)
+	if err != nil {
+		log.Printf("password reset render failed for user %q: %v", user.ID, err)
+		return
+	}
+	if err := a.notifier.Send(ctx, notify.Recipient{Email: user.Email}, msg); err != nil {
+		log.Printf("password reset send failed for user %q: %v", user.ID, err)
+	}
+}
+
+// HandleResetPassword consumes a reset token, updates the password and revokes
+// every session for the account. It deliberately does not start a session.
+func (a *authAPI) HandleResetPassword(w http.ResponseWriter, r *http.Request) {
+	var req resetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if a.resets == nil {
+		http.Error(w, "password reset is not configured", http.StatusInternalServerError)
+		return
+	}
+	if msg := validatePassword(req.NewPassword); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+	reset, err := a.resets.ConsumeReset(r.Context(), auth.HashToken(req.Token))
+	if err != nil {
+		if errors.Is(err, auth.ErrNotFound) {
+			http.Error(w, "invalid or expired reset link", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, "could not reset password", http.StatusInternalServerError)
+		return
+	}
+	hash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		http.Error(w, "could not reset password", http.StatusInternalServerError)
+		return
+	}
+	if err := a.users.UpdatePassword(r.Context(), reset.UserID, hash); err != nil {
+		http.Error(w, "invalid or expired reset link", http.StatusBadRequest)
+		return
+	}
+	if err := a.sessions.DeleteUserSessions(r.Context(), reset.UserID, ""); err != nil {
+		http.Error(w, "could not revoke sessions", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "password reset"})
 }
 
 // HandleLogout revokes the current session and clears the cookie.
