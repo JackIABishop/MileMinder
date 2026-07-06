@@ -1,0 +1,50 @@
+name: CI
+
+# Runs the test/build checks on every pull request targeting main and on
+# pushes to main. Test-only: this never deploys and shares nothing with
+# deploy.yml (note the distinct concurrency group), so it can't interfere
+# with a Fly deploy.
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+# Cancel superseded runs for the same ref, but keep this independent from the
+# fly-deploy group so CI and deploys never cancel each other.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go build / vet / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0' # matches the go directive in go.mod
+          cache-dependency-path: go.sum
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+
+  web:
+    name: Web check / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20' # README documents Node.js 20+ (vite-plugin-pwa)
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run check
+        working-directory: web
+      - run: npm run build
+        working-directory: web
