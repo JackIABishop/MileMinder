@@ -105,9 +105,15 @@ func (s *Scheduler) runUser(ctx context.Context, u *auth.User) {
 		}
 	}
 	if remindersOn {
-		if err := s.Reminders.PruneUserReminders(ctx, u.ID, keep); err != nil {
-			s.logf("alerts: prune reminders for user %s: %v", u.ID, err)
-		}
+		// Prune only derived reminder state, never user-configured settings.
+		// keep is built from ListVehicles, which deliberately skips unreadable or
+		// unparseable vehicle files (see yamlstore.ListVehicles); pruning settings
+		// against it would let a transient read/parse glitch silently and
+		// permanently delete a user's reminder config for a vehicle that still
+		// exists. Losing derived state (last_reminded_at) self-heals — at worst one
+		// duplicate reminder — so it is safe to prune here. Settings cleanup belongs
+		// on an explicit vehicle-delete path (none exists in hosted mode yet);
+		// PruneUserReminders stays on the store for that future use.
 		if err := s.ReminderState.PruneUserReminderStates(ctx, u.ID, keep); err != nil {
 			s.logf("alerts: prune reminder states for user %s: %v", u.ID, err)
 		}

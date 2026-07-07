@@ -259,8 +259,11 @@ func TestReminderPlainVehicleNoReadingsSkipped(t *testing.T) {
 	}
 }
 
-// TestReminderPrunesDeletedVehicle: removing a vehicle prunes its settings+state.
-func TestReminderPrunesDeletedVehicle(t *testing.T) {
+// TestReminderSweepPrunesStateNotSettings: the sweep prunes derived reminder
+// state for vehicles missing from ListVehicles, but must never delete
+// user-configured settings — ListVehicles silently skips unreadable/unparseable
+// files, so pruning settings against it would risk destroying live config.
+func TestReminderSweepPrunesStateNotSettings(t *testing.T) {
 	ctx := context.Background()
 	f := newReminderFixture(t, alertDate("2025-04-20"))
 	f.save(t, "golf", policyVehicle(5000))
@@ -272,11 +275,13 @@ func TestReminderPrunesDeletedVehicle(t *testing.T) {
 	}
 	f.sched.RunOnce(ctx)
 
-	if _, err := f.rSettings.GetReminder(ctx, f.user.ID, "golf"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("settings not pruned: %v", err)
-	}
+	// Derived state is pruned (self-healing).
 	if _, err := f.rState.GetReminderState(ctx, f.user.ID, "golf"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("state not pruned: %v", err)
+	}
+	// User settings are preserved — the sweep must not delete config.
+	if _, err := f.rSettings.GetReminder(ctx, f.user.ID, "golf"); err != nil {
+		t.Fatalf("settings should survive the sweep, got: %v", err)
 	}
 }
 
