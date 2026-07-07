@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, updateSettings, importCSV, changePassword, getProfileExportURL, type VehicleListItem, type VehicleStatus, type VehicleProfile } from '$lib/api';
+	import { listVehicles, createVehicle, getVehicle, updatePlan, getReadings, getAlertPrefs, updateAlertPrefs, getReminderSettings, updateReminderSettings, updateSettings, importCSV, changePassword, getProfileExportURL, type VehicleListItem, type VehicleStatus, type VehicleProfile, type ReminderSettings } from '$lib/api';
 	import { mode, user, logout } from '$lib/auth';
 	import { settings } from '$lib/settings';
 	import { SUPPORTED_CURRENCIES, minorUnitLabel } from '$lib/money';
@@ -29,6 +29,10 @@
 	let excessRates: Record<string, number> = {};
 	let savingRate: Record<string, boolean> = {};
 	let vehicleStatuses: Record<string, VehicleStatus> = {};
+
+	// Per-vehicle reading reminders (hosted mode only).
+	let reminderSettings: Record<string, ReminderSettings> = {};
+	let savingReminder: Record<string, boolean> = {};
 	let showPlanForm: Record<string, boolean> = {};
 	let savingPlan: Record<string, boolean> = {};
 	let planForms: Record<string, {
@@ -152,9 +156,12 @@
 		loading = true;
 		try {
 			vehicles = await listVehicles();
-			// Pull each vehicle's current excess rate so the inline editor prefills.
+			// Pull each vehicle's current excess rate so the inline editor prefills,
+			// plus reminder settings in hosted mode.
 			const rates: Record<string, number> = {};
 			const statuses: Record<string, VehicleStatus> = {};
+			const reminders: Record<string, ReminderSettings> = {};
+			const hosted = $mode === 'hosted';
 			await Promise.all(
 				vehicles.map(async (v) => {
 					try {
@@ -164,10 +171,18 @@
 					} catch {
 						rates[v.id] = 0;
 					}
+					if (hosted) {
+						try {
+							reminders[v.id] = await getReminderSettings(v.id);
+						} catch {
+							reminders[v.id] = { user_id: '', vehicle_id: v.id, enabled: false, frequency: 'weekly' };
+						}
+					}
 				})
 			);
 			excessRates = rates;
 			vehicleStatuses = statuses;
+			reminderSettings = reminders;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load vehicles';
 		} finally {
@@ -185,6 +200,31 @@
 			error = e instanceof Error ? e.message : 'Failed to update excess rate';
 		} finally {
 			savingRate = { ...savingRate, [id]: false };
+		}
+	}
+
+	async function handleSaveReminder(id: string) {
+		const r = reminderSettings[id];
+		if (!r) return;
+		if (r.frequency === 'custom' && (!r.custom_interval || r.custom_interval < 1)) {
+			error = 'Custom reminders need an interval of at least 1';
+			return;
+		}
+		savingReminder = { ...savingReminder, [id]: true };
+		error = '';
+		try {
+			const saved = await updateReminderSettings(id, {
+				enabled: r.enabled,
+				frequency: r.frequency,
+				custom_interval: r.frequency === 'custom' ? r.custom_interval : undefined,
+				custom_unit: r.frequency === 'custom' ? (r.custom_unit ?? 'days') : undefined
+			});
+			reminderSettings = { ...reminderSettings, [id]: saved };
+			success = `Reminders updated for ${id}.`;
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Failed to update reminders';
+		} finally {
+			savingReminder = { ...savingReminder, [id]: false };
 		}
 	}
 
@@ -717,6 +757,48 @@
 											</button>
 										</form>
 									{/if}
+								</div>
+							{/if}
+
+							{#if $mode === 'hosted' && reminderSettings[vehicle.id]}
+								<!-- Reading reminders (#52): time-based nudge to log a reading -->
+								<div class="mt-4 pt-4 border-t border-carbon-800">
+									<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+										<label class="flex items-center gap-3">
+											<input type="checkbox" bind:checked={reminderSettings[vehicle.id].enabled} class="w-4 h-4 accent-accent-primary" />
+											<span class="text-carbon-100 font-medium">Email me to log a reading</span>
+										</label>
+										<button class="btn-secondary text-sm" on:click={() => handleSaveReminder(vehicle.id)} disabled={savingReminder[vehicle.id]}>
+											{savingReminder[vehicle.id] ? 'Saving...' : 'Save reminders'}
+										</button>
+									</div>
+									<div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+										<div>
+											<label for="reminderFreq-{vehicle.id}" class="label">Frequency</label>
+											<select id="reminderFreq-{vehicle.id}" bind:value={reminderSettings[vehicle.id].frequency} class="input" disabled={!reminderSettings[vehicle.id].enabled}>
+												<option value="daily">Daily</option>
+												<option value="weekly">Weekly</option>
+												<option value="quarterly">Quarterly</option>
+												<option value="custom">Custom</option>
+											</select>
+										</div>
+										{#if reminderSettings[vehicle.id].frequency === 'custom'}
+											<div class="grid grid-cols-2 gap-2 items-end">
+												<div>
+													<label for="reminderInterval-{vehicle.id}" class="label">Every</label>
+													<input id="reminderInterval-{vehicle.id}" type="number" min="1" step="1" bind:value={reminderSettings[vehicle.id].custom_interval} class="input font-mono" disabled={!reminderSettings[vehicle.id].enabled} />
+												</div>
+												<div>
+													<label for="reminderUnit-{vehicle.id}" class="label">Unit</label>
+													<select id="reminderUnit-{vehicle.id}" bind:value={reminderSettings[vehicle.id].custom_unit} class="input" disabled={!reminderSettings[vehicle.id].enabled}>
+														<option value="days">Days</option>
+														<option value="weeks">Weeks</option>
+														<option value="months">Months</option>
+													</select>
+												</div>
+											</div>
+										{/if}
+									</div>
 								</div>
 							{/if}
 						</div>
