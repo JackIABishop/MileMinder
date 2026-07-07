@@ -64,6 +64,8 @@ A hosted user's directory is **byte-compatible with a single-user `~/.mileminder
 <data-dir>/resets.yml             # outstanding password reset token hashes
 <data-dir>/alert_prefs.yml        # per-user alert preferences
 <data-dir>/alerts_state.yml       # per-user/vehicle alert dedup state
+<data-dir>/reminder_settings.yml  # per-user/vehicle reading-reminder settings
+<data-dir>/reminder_state.yml     # per-user/vehicle last-reminded timestamps
 <data-dir>/users/<userID>/<vehicleID>.yml
 <data-dir>/users/<userID>/current
 ```
@@ -100,6 +102,32 @@ That keeps local hosted mode fully runnable without email credentials.
 `MILEMINDER_BASE_URL` should be set in deployed hosted mode so alert and password
 reset emails point at the public site. The server never builds reset links from
 the request `Host` header.
+
+## Reading reminders
+
+The same in-process scheduler also sends **per-vehicle reading reminders**: a
+nudge to log an odometer reading when a vehicle has gone stale. Unlike allowance
+alerts (which fire once per OK→breached crossing), a reminder re-fires once per
+interval for as long as the vehicle stays stale, anchored on the later of the
+last logged reading and the last reminder sent. Logging a reading resets the
+clock.
+
+- **Scope.** v1 covers time-based "log a reading" reminders only — email
+  channel only. It deliberately does not re-implement mileage-threshold alerting
+  (that is what allowance alerts above already do), and does not cover date-based
+  tasks (registration/insurance renewal), SMS, push, snooze, or advance offsets;
+  those are possible follow-ups.
+- **Cadence.** `daily` (1 day), `weekly` (7), `quarterly` (91), or `custom`
+  (an integer interval × `days`/`weeks`/`months`, where a month is treated as 30
+  days). Applies to both allowance and plain vehicles; a vehicle with no readings
+  yet anchors on its plan start (policy vehicles) or is skipped (plain vehicles).
+- **Default off.** Unconfigured vehicles report `enabled=false, frequency=weekly`
+  and are never emailed until a user turns them on in Settings.
+- **API.** `GET/PUT /api/v1/vehicles/{id}/reminders` (session-gated, hosted only).
+  The `PUT` accepts a partial `{enabled, frequency, custom_interval, custom_unit}`.
+- **Disabling.** `--no-alerts` disables the whole background scheduler, i.e. both
+  allowance alerts and reading reminders. Delivery reuses the same
+  `notify.Channel` (SMTP when configured, log channel otherwise).
 
 ## Claiming your existing data (migration by copy)
 

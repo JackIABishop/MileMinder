@@ -23,13 +23,14 @@ import (
 // hostedFixture bundles a hosted test server with the stores behind it so tests
 // can both drive the API and inspect state.
 type hostedFixture struct {
-	srv      *httptest.Server
-	users    *auth.MemoryUserStore
-	sessions *auth.MemorySessionStore
-	resets   *auth.MemoryPasswordResetStore
-	notifier *notify.Fake
-	tenants  *storage.MemoryTenants
-	prefs    *alerts.MemoryPrefsStore
+	srv       *httptest.Server
+	users     *auth.MemoryUserStore
+	sessions  *auth.MemorySessionStore
+	resets    *auth.MemoryPasswordResetStore
+	notifier  *notify.Fake
+	tenants   *storage.MemoryTenants
+	prefs     *alerts.MemoryPrefsStore
+	reminders *alerts.MemoryReminderSettingsStore
 }
 
 // newHostedServer builds a hosted server on in-memory stores. mutate can adjust
@@ -38,12 +39,13 @@ type hostedFixture struct {
 func newHostedServer(t *testing.T, mutate func(*api.HostedConfig)) hostedFixture {
 	t.Helper()
 	f := hostedFixture{
-		users:    auth.NewMemoryUserStore(),
-		sessions: auth.NewMemorySessionStore(),
-		resets:   auth.NewMemoryPasswordResetStore(),
-		notifier: notify.NewFake(),
-		tenants:  storage.NewMemoryTenants(),
-		prefs:    alerts.NewMemoryPrefsStore(),
+		users:     auth.NewMemoryUserStore(),
+		sessions:  auth.NewMemorySessionStore(),
+		resets:    auth.NewMemoryPasswordResetStore(),
+		notifier:  notify.NewFake(),
+		tenants:   storage.NewMemoryTenants(),
+		prefs:     alerts.NewMemoryPrefsStore(),
+		reminders: alerts.NewMemoryReminderSettingsStore(),
 	}
 	cfg := api.HostedConfig{
 		Users:          f.users,
@@ -53,6 +55,7 @@ func newHostedServer(t *testing.T, mutate func(*api.HostedConfig)) hostedFixture
 		Notifier:       f.notifier,
 		BaseURL:        "https://mileminder.example",
 		AlertPrefs:     f.prefs,
+		Reminders:      f.reminders,
 		SecureCookies:  false, // plain-HTTP httptest
 		AuthRatePerSec: 1000,
 		AuthRateBurst:  1000,
@@ -711,6 +714,141 @@ func TestHostedAlertPrefsValidationAndAuth(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid threshold: want 400, got %d", resp.StatusCode)
+	}
+}
+
+func TestHostedReminderDefaultAndUpdate(t *testing.T) {
+	f := newHostedServer(t, nil)
+	client := newClient(t)
+	signup(t, f.srv, client, "alice@example.com", "password123")
+	createVehicle(t, f.srv, client, "golf")
+
+	// Unset vehicle reports defaults: reminders off, weekly.
+	resp, err := client.Get(f.srv.URL + "/api/v1/vehicles/golf/reminders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get reminders: want 200, got %d", resp.StatusCode)
+	}
+	var got alerts.ReminderSettings
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Enabled || got.Frequency != alerts.FrequencyWeekly || got.VehicleID != "golf" {
+		t.Fatalf("default reminder = %+v, want disabled weekly for golf", got)
+	}
+
+	// Update to a custom cadence.
+	body := `{"enabled":true,"frequency":"custom","custom_interval":10,"custom_unit":"days"}`
+	req, _ := http.NewRequest(http.MethodPut, f.srv.URL+"/api/v1/vehicles/golf/reminders", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("put reminders: want 200, got %d (%s)", resp.StatusCode, b)
+	}
+	var updated alerts.ReminderSettings
+	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Enabled || updated.Frequency != alerts.FrequencyCustom || updated.CustomInterval != 10 || updated.CustomUnit != alerts.UnitDays {
+		t.Fatalf("updated reminder = %+v", updated)
+	}
+
+	// Persisted: a fresh GET returns the saved custom cadence.
+	resp, err = client.Get(f.srv.URL + "/api/v1/vehicles/golf/reminders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var reread alerts.ReminderSettings
+	if err := json.NewDecoder(resp.Body).Decode(&reread); err != nil {
+		t.Fatal(err)
+	}
+	if reread.Frequency != alerts.FrequencyCustom || reread.CustomInterval != 10 {
+		t.Fatalf("reread reminder = %+v", reread)
+	}
+}
+
+func TestHostedReminderValidationAndAuth(t *testing.T) {
+	f := newHostedServer(t, nil)
+
+	// Unauthenticated is rejected.
+	resp, err := http.Get(f.srv.URL + "/api/v1/vehicles/golf/reminders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated get reminders: want 401, got %d", resp.StatusCode)
+	}
+
+	client := newClient(t)
+	signup(t, f.srv, client, "alice@example.com", "password123")
+
+	// Unknown vehicle is a 404 (settings are gated on vehicle ownership).
+	resp, err = client.Get(f.srv.URL + "/api/v1/vehicles/ghost/reminders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown vehicle: want 404, got %d", resp.StatusCode)
+	}
+
+	createVehicle(t, f.srv, client, "golf")
+	for _, bad := range []string{
+		`{"frequency":"yearly"}`,
+		`{"frequency":"custom"}`,
+		`{"frequency":"custom","custom_interval":0,"custom_unit":"days"}`,
+		`{"frequency":"custom","custom_interval":3,"custom_unit":"years"}`,
+	} {
+		req, _ := http.NewRequest(http.MethodPut, f.srv.URL+"/api/v1/vehicles/golf/reminders", strings.NewReader(bad))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("invalid reminder %q: want 400, got %d", bad, resp.StatusCode)
+		}
+	}
+}
+
+// A user must not read or write reminder settings for another user's same-named
+// vehicle id.
+func TestHostedReminderIsolation(t *testing.T) {
+	f := newHostedServer(t, nil)
+
+	alice := newClient(t)
+	signup(t, f.srv, alice, "alice@example.com", "password123")
+	createVehicle(t, f.srv, alice, "golf")
+	body := `{"enabled":true,"frequency":"daily"}`
+	req, _ := http.NewRequest(http.MethodPut, f.srv.URL+"/api/v1/vehicles/golf/reminders", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := alice.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// Bob has no vehicle "golf": the endpoint 404s rather than exposing alice's.
+	bob := newClient(t)
+	signup(t, f.srv, bob, "bob@example.com", "password123")
+	resp, err = bob.Get(f.srv.URL + "/api/v1/vehicles/golf/reminders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("bob get alice's reminders: want 404, got %d", resp.StatusCode)
 	}
 }
 

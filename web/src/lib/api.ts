@@ -136,6 +136,18 @@ export interface AlertPrefs {
 	threshold: number;
 }
 
+// Per-vehicle reading reminders (hosted mode). frequency is one of
+// daily|weekly|quarterly|custom; custom_interval/custom_unit apply only when
+// frequency is "custom".
+export interface ReminderSettings {
+	user_id: string;
+	vehicle_id: string;
+	enabled: boolean;
+	frequency: 'daily' | 'weekly' | 'quarterly' | 'custom';
+	custom_interval?: number;
+	custom_unit?: 'days' | 'weeks' | 'months';
+}
+
 // User-level preferences. Money fields across the API are stored in the minor
 // unit of `currency`; distance_unit is always "mi" today (km is future work).
 export interface Settings {
@@ -260,6 +272,21 @@ export async function getAlertPrefs(): Promise<AlertPrefs> {
 
 export async function updateAlertPrefs(data: Pick<AlertPrefs, 'enabled' | 'threshold'>): Promise<AlertPrefs> {
 	return fetchJSON<AlertPrefs>(`${API_BASE}/alerts/prefs`, {
+		method: 'PUT',
+		body: JSON.stringify(data)
+	});
+}
+
+// Per-vehicle reading reminders (hosted mode).
+export async function getReminderSettings(vehicleId: string): Promise<ReminderSettings> {
+	return fetchJSON<ReminderSettings>(`${API_BASE}/vehicles/${encodeURIComponent(vehicleId)}/reminders`);
+}
+
+export async function updateReminderSettings(
+	vehicleId: string,
+	data: Partial<Pick<ReminderSettings, 'enabled' | 'frequency' | 'custom_interval' | 'custom_unit'>>
+): Promise<ReminderSettings> {
+	return fetchJSON<ReminderSettings>(`${API_BASE}/vehicles/${encodeURIComponent(vehicleId)}/reminders`, {
 		method: 'PUT',
 		body: JSON.stringify(data)
 	});

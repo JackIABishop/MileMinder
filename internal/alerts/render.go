@@ -69,6 +69,56 @@ func RenderBreachMessage(s calc.Status, b calc.Breach, baseURL string) (notify.M
 	}, nil
 }
 
+var reminderTextTemplate = texttemplate.Must(texttemplate.New("reminder-text").Parse(`{{if .HasReading}}It's been {{.Days}} day{{if ne .Days 1}}s{{end}} since you last logged a reading for {{.Vehicle}}.
+
+Last reading: {{.LatestMiles}} mi on {{.LatestDate}}.{{else}}You haven't logged any readings for {{.Vehicle}} yet.{{end}}
+
+Log an odometer reading to keep your mileage tracking up to date.
+
+{{.Footer}}
+`))
+
+var reminderHTMLTemplate = htmltemplate.Must(htmltemplate.New("reminder-html").Parse(`{{if .HasReading}}<p>It's been {{.Days}} day{{if ne .Days 1}}s{{end}} since you last logged a reading for {{.Vehicle}}.</p>
+<p>Last reading: {{.LatestMiles}} mi on {{.LatestDate}}.</p>{{else}}<p>You haven't logged any readings for {{.Vehicle}} yet.</p>{{end}}
+<p>Log an odometer reading to keep your mileage tracking up to date.</p>
+<p>{{.Footer}}</p>`))
+
+type reminderTemplateData struct {
+	Vehicle     string
+	Days        int
+	HasReading  bool
+	LatestMiles string
+	LatestDate  string
+	Footer      string
+}
+
+// RenderReminderMessage turns a stale-reading reminder into a channel-neutral
+// message. daysSince is the whole days since the last logged reading.
+func RenderReminderMessage(s calc.Status, daysSince int, baseURL string) (notify.Message, error) {
+	data := reminderTemplateData{
+		Vehicle:     displayVehicle(s),
+		Days:        daysSince,
+		HasReading:  s.LatestDate != "",
+		LatestMiles: formatMiles(float64(s.LatestReading)),
+		LatestDate:  s.LatestDate,
+		Footer:      footer(baseURL),
+	}
+
+	var text bytes.Buffer
+	if err := reminderTextTemplate.Execute(&text, data); err != nil {
+		return notify.Message{}, err
+	}
+	var html bytes.Buffer
+	if err := reminderHTMLTemplate.Execute(&html, data); err != nil {
+		return notify.Message{}, err
+	}
+	return notify.Message{
+		Subject: fmt.Sprintf("Reminder: log a reading for %s", data.Vehicle),
+		Body:    strings.TrimSpace(text.String()),
+		HTML:    strings.TrimSpace(html.String()),
+	}, nil
+}
+
 func displayVehicle(s calc.Status) string {
 	if s.Vehicle != "" {
 		return s.Vehicle

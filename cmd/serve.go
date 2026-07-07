@@ -92,6 +92,8 @@ func hostedHandler(cmd *cobra.Command, devMode bool, url string) (http.Handler, 
 	}
 	alertPrefs := alerts.NewFilePrefsStore(dataDir)
 	alertState := alerts.NewFileStateStore(dataDir)
+	reminderSettings := alerts.NewFileReminderSettingsStore(dataDir)
+	reminderState := alerts.NewFileReminderStateStore(dataDir)
 	users := filestore.NewUserStore(dataDir)
 	tenants := yamlstore.NewTenants(dataDir)
 	cfg := api.HostedConfig{
@@ -102,6 +104,7 @@ func hostedHandler(cmd *cobra.Command, devMode bool, url string) (http.Handler, 
 		Notifier:      channel,
 		BaseURL:       baseURL,
 		AlertPrefs:    alertPrefs,
+		Reminders:     reminderSettings,
 		SecureCookies: secure,
 	}
 
@@ -117,15 +120,17 @@ func hostedHandler(cmd *cobra.Command, devMode bool, url string) (http.Handler, 
 			return nil, err
 		}
 		scheduler := &alerts.Scheduler{
-			Users:    users,
-			Tenants:  tenants,
-			State:    alertState,
-			Prefs:    alertPrefs,
-			Channel:  channel,
-			Now:      time.Now,
-			Interval: interval,
-			BaseURL:  baseURL,
-			Logger:   log.Default(),
+			Users:         users,
+			Tenants:       tenants,
+			State:         alertState,
+			Prefs:         alertPrefs,
+			Channel:       channel,
+			Now:           time.Now,
+			Interval:      interval,
+			BaseURL:       baseURL,
+			Logger:        log.Default(),
+			Reminders:     reminderSettings,
+			ReminderState: reminderState,
 		}
 		go scheduler.Run(cmd.Context())
 		fmt.Printf("   alerts scheduler interval: %s\n", interval)
@@ -244,5 +249,5 @@ func init() {
 	serveCmd.Flags().String("base-url", "", "Public hosted base URL for links in emails (env: MILEMINDER_BASE_URL)")
 	serveCmd.Flags().Bool("secure-cookies", true, "Set the Secure flag on session cookies (disable only for plain-HTTP localhost testing)")
 	serveCmd.Flags().Duration("alerts-interval", time.Hour, "Hosted alert scheduler interval (env: MILEMINDER_ALERTS_INTERVAL)")
-	serveCmd.Flags().Bool("no-alerts", false, "Disable the hosted alert scheduler")
+	serveCmd.Flags().Bool("no-alerts", false, "Disable the hosted background scheduler (allowance alerts and reading reminders)")
 }
