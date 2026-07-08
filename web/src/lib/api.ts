@@ -86,6 +86,22 @@ export interface GraphData {
 	ideals: number[];
 }
 
+// What-if scenario request/response. Mirrors calc.Scenario (Go). The projection
+// is computed server-side (reusing the status/projection math); the client never
+// re-derives allowance/pace formulas.
+export interface ScenarioRequest {
+	extra_miles: number;
+	by_date: string; // YYYY-MM-DD
+}
+
+export interface Scenario {
+	extra_miles: number;
+	by_date: string;
+	baseline_miles: number; // projected odometer at by_date without the trip
+	hypothetical_miles: number; // baseline + extra — the overlay endpoint
+	status: VehicleStatus; // status of the hypothetical, as of by_date
+}
+
 export interface CreateVehicleRequest {
 	id: string;
 	vehicle: string;
@@ -234,6 +250,13 @@ export async function deleteReading(vehicleId: string, date: string): Promise<{ 
 // Graph data
 export async function getGraphData(vehicleId: string): Promise<GraphData> {
 	return fetchJSON<GraphData>(`${API_BASE}/vehicles/${encodeURIComponent(vehicleId)}/graph`);
+}
+
+export async function getScenario(vehicleId: string, data: ScenarioRequest): Promise<Scenario> {
+	return fetchJSON<Scenario>(`${API_BASE}/vehicles/${encodeURIComponent(vehicleId)}/scenario`, {
+		method: 'POST',
+		body: JSON.stringify(data)
+	});
 }
 
 // Current vehicle

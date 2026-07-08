@@ -1,7 +1,9 @@
 package calc
 
 import (
+	"errors"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 
@@ -461,6 +463,160 @@ func TestComputeFleetInsights_AllPlain(t *testing.T) {
 	}
 	if !almostEqual(got.TotalAvgAnnualMileage, plain.AvgAnnualMileage) {
 		t.Errorf("TotalAvgAnnualMileage = %v, want %v", got.TotalAvgAnnualMileage, plain.AvgAnnualMileage)
+	}
+}
+
+// TestComputeScenario_BaselineSemantics locks in issue #9 decision 3: the
+// what-if is additive to the vehicle's existing trajectory, not a naive
+// latest+extra. The hypothetical odometer must be (projected baseline at
+// by_date) + extra_miles, and the status must be computed as of by_date.
+func TestComputeScenario_BaselineSemantics(t *testing.T) {
+	// 10000 mi/yr plan, 100 days in at 3000 mi → year pace 30 mi/day.
+	v := vehicle("2025-01-01", "2028-01-01", 10000, 0, map[string]int{
+		"2025-01-01": 0,
+		"2025-04-11": 3000,
+	})
+	now := date("2025-04-11")
+	byDate := date("2025-05-11") // 30 days out
+	const extra = 600.0
+
+	sc, err := computeScenario("test", v, extra, byDate, now)
+	if err != nil {
+		t.Fatalf("computeScenario returned error: %v", err)
+	}
+
+	// Baseline = latest + current daily_rate * days to by_date.
+	cur := computeStatus("test", v, now)
+	wantBaseline := 3000.0 + cur.DailyRate*30.0
+	if !almostEqual(sc.BaselineMiles, wantBaseline) {
+		t.Errorf("BaselineMiles = %v, want %v", sc.BaselineMiles, wantBaseline)
+	}
+	if !almostEqual(sc.HypotheticalMiles, wantBaseline+extra) {
+		t.Errorf("HypotheticalMiles = %v, want %v", sc.HypotheticalMiles, wantBaseline+extra)
+	}
+
+	// The decisive assertion: because normal driving keeps happening in the gap,
+	// the hypothetical odometer is strictly higher than a naive latest+extra.
+	if !(sc.HypotheticalMiles > 3000.0+extra) {
+		t.Errorf("HypotheticalMiles = %v, want > naive %v (baseline projection missing?)", sc.HypotheticalMiles, 3000.0+extra)
+	}
+
+	// Status is a snapshot as of by_date: latest reading is the synthetic one,
+	// and delta measures the hypothetical odometer against the allowance line
+	// *at by_date*, not today.
+	if sc.Status.LatestDate != "2025-05-11" {
+		t.Errorf("Status.LatestDate = %q, want 2025-05-11", sc.Status.LatestDate)
+	}
+	roundedHyp := math.Round(sc.HypotheticalMiles)
+	if float64(sc.Status.LatestReading) != roundedHyp {
+		t.Errorf("Status.LatestReading = %d, want %v", sc.Status.LatestReading, roundedHyp)
+	}
+	wantDelta := roundedHyp - AllowanceMiles(10000, date("2025-01-01"), byDate)
+	if !almostEqual(sc.Status.Delta, wantDelta) {
+		t.Errorf("Status.Delta = %v, want %v (delta must be measured as of by_date)", sc.Status.Delta, wantDelta)
+	}
+	if sc.ByDate != "2025-05-11" || sc.ExtraMiles != extra {
+		t.Errorf("echoed inputs = %q/%v, want 2025-05-11/%v", sc.ByDate, sc.ExtraMiles, extra)
+	}
+}
+
+// TestComputeScenario_ZeroExtraIsPureBaseline: extra_miles = 0 answers the pure
+// "where will I be by X at my current pace" question.
+func TestComputeScenario_ZeroExtraIsPureBaseline(t *testing.T) {
+	v := vehicle("2025-01-01", "2028-01-01", 10000, 0, map[string]int{
+		"2025-01-01": 0,
+		"2025-04-11": 3000,
+	})
+	sc, err := computeScenario("test", v, 0, date("2025-05-11"), date("2025-04-11"))
+	if err != nil {
+		t.Fatalf("computeScenario returned error: %v", err)
+	}
+	if !almostEqual(sc.HypotheticalMiles, sc.BaselineMiles) {
+		t.Errorf("with zero extra: HypotheticalMiles %v != BaselineMiles %v", sc.HypotheticalMiles, sc.BaselineMiles)
+	}
+}
+
+// TestComputeScenario_CrossesYearBoundary: when by_date lands in the *next*
+// allowance year, the status segment must move forward to that year — proving
+// the status is computed as of by_date, not as of today.
+func TestComputeScenario_CrossesYearBoundary(t *testing.T) {
+	// Plan year boundaries fall on 06-01. Today sits in year 1; by_date in year 2.
+	v := vehicle("2024-06-01", "2027-06-01", 10000, 0, map[string]int{
+		"2024-06-01": 0,
+		"2025-04-01": 3000,
+	})
+	now := date("2025-04-01")    // segment 2024-06-01 → 2025-06-01
+	byDate := date("2025-07-01") // segment 2025-06-01 → 2026-06-01
+
+	sc, err := computeScenario("test", v, 500, byDate, now)
+	if err != nil {
+		t.Fatalf("computeScenario returned error: %v", err)
+	}
+	if sc.Status.LatestDate != "2025-07-01" {
+		t.Errorf("Status.LatestDate = %q, want 2025-07-01", sc.Status.LatestDate)
+	}
+	// Days left in by_date's allowance year: 2025-07-01 → 2026-06-01 = 335 days.
+	// Computed as-of-today it would be ~61 (2025-04-01 → 2025-06-01).
+	segmentEnd := date("2026-06-01")
+	wantDaysLeft := int(math.Ceil(segmentEnd.Sub(byDate).Hours() / 24.0))
+	if sc.Status.DaysLeftYear != wantDaysLeft {
+		t.Errorf("Status.DaysLeftYear = %d, want %d (segment should follow by_date, not today)", sc.Status.DaysLeftYear, wantDaysLeft)
+	}
+}
+
+func TestComputeScenario_Errors(t *testing.T) {
+	plan := func(rdgs map[string]int) *model.VehicleData {
+		return vehicle("2025-01-01", "2028-01-01", 10000, 0, rdgs)
+	}
+	valid := map[string]int{"2025-01-01": 0, "2025-04-11": 3000}
+
+	cases := []struct {
+		name    string
+		data    *model.VehicleData
+		extra   float64
+		byDate  time.Time
+		now     time.Time
+		wantErr error
+	}{
+		{"no plan", &model.VehicleData{Vehicle: "Owned", Readings: valid}, 100, date("2025-05-11"), date("2025-04-11"), ErrScenarioNoPlan},
+		{"negative extra", plan(valid), -1, date("2025-05-11"), date("2025-04-11"), ErrScenarioNegativeMiles},
+		{"no readings", plan(map[string]int{}), 100, date("2025-05-11"), date("2025-04-11"), ErrScenarioNoReadings},
+		{"by_date is today", plan(valid), 100, date("2025-04-11"), date("2025-04-11"), ErrScenarioDateNotFuture},
+		{"by_date in past", plan(valid), 100, date("2025-03-01"), date("2025-04-11"), ErrScenarioDateNotFuture},
+		{"by_date == latest reading", plan(valid), 100, date("2025-04-11"), date("2025-04-01"), ErrScenarioDateNotFuture},
+		{"by_date after plan end", plan(valid), 100, date("2028-06-01"), date("2025-04-11"), ErrScenarioAfterPlanEnd},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := computeScenario("test", tc.data, tc.extra, tc.byDate, tc.now)
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("computeScenario err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestComputeScenario_DoesNotMutateInput is the calc-level half of issue #9's
+// core safety property: the projection is read-only. The API test asserts the
+// same at the storage layer.
+func TestComputeScenario_DoesNotMutateInput(t *testing.T) {
+	rdgs := map[string]int{"2025-01-01": 0, "2025-04-11": 3000}
+	v := vehicle("2025-01-01", "2028-01-01", 10000, 0, rdgs)
+
+	before := make(map[string]int, len(v.Readings))
+	for k, val := range v.Readings {
+		before[k] = val
+	}
+
+	if _, err := computeScenario("test", v, 600, date("2025-05-11"), date("2025-04-11")); err != nil {
+		t.Fatalf("computeScenario returned error: %v", err)
+	}
+
+	if !reflect.DeepEqual(v.Readings, before) {
+		t.Errorf("computeScenario mutated input readings: got %v, want %v", v.Readings, before)
+	}
+	if _, ok := v.Readings["2025-05-11"]; ok {
+		t.Error("computeScenario added the synthetic reading to the caller's map")
 	}
 }
 

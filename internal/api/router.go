@@ -88,6 +88,7 @@ func registerDataRoutes(mux *http.ServeMux, s *Server, data middleware) {
 	mux.Handle("GET /api/v1/vehicles/{id}/readings", d(s.HandleGetReadings))
 	mux.Handle("DELETE /api/v1/vehicles/{id}/readings/{date}", d(s.HandleDeleteReading))
 	mux.Handle("GET /api/v1/vehicles/{id}/graph", d(s.HandleGetGraphData))
+	mux.Handle("POST /api/v1/vehicles/{id}/scenario", d(s.HandleVehicleScenario))
 	mux.Handle("GET /api/v1/vehicles/{id}/export", d(s.HandleExportCSV))
 	mux.Handle("GET /api/v1/vehicles/{id}/profile", d(s.HandleExportProfile))
 	mux.Handle("POST /api/v1/vehicles/{id}/import", d(s.HandleImportCSV))
