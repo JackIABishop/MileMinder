@@ -553,6 +553,66 @@ func (s *Server) HandleGetGraphData(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleVehicleScenario runs a read-only what-if projection: "if I drive
+// extra_miles on top of my normal pace by by_date, where do I land relative to
+// my allowance?". It loads the vehicle, builds a hypothetical copy in memory
+// (calc.ComputeScenario never mutates the input) and returns the resulting
+// status. It never writes to the store — that is the whole safety property of
+// the feature, so there is deliberately no Save/PutReading call in this handler.
+func (s *Server) HandleVehicleScenario(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "vehicle ID required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		ExtraMiles *float64 `json:"extra_miles"`
+		ByDate     string   `json:"by_date"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeValidationError(w, "invalid_json", err.Error())
+		return
+	}
+	if req.ExtraMiles == nil {
+		writeValidationError(w, "missing_extra_miles", "extra_miles is required")
+		return
+	}
+	byDate, err := time.Parse("2006-01-02", req.ByDate)
+	if err != nil {
+		writeValidationError(w, "invalid_by_date", "by_date must be a YYYY-MM-DD date")
+		return
+	}
+
+	data, err := storeFrom(r.Context()).GetVehicle(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	scenario, err := calc.ComputeScenario(id, data, *req.ExtraMiles, byDate)
+	if err != nil {
+		switch {
+		case errors.Is(err, calc.ErrScenarioNoPlan):
+			writeValidationError(w, "vehicle_has_no_plan", err.Error())
+		case errors.Is(err, calc.ErrScenarioNoReadings):
+			writeValidationError(w, "no_readings", err.Error())
+		case errors.Is(err, calc.ErrScenarioDateNotFuture):
+			writeValidationError(w, "by_date_not_future", err.Error())
+		case errors.Is(err, calc.ErrScenarioAfterPlanEnd):
+			writeValidationError(w, "by_date_after_plan_end", err.Error())
+		case errors.Is(err, calc.ErrScenarioNegativeMiles):
+			writeValidationError(w, "invalid_extra_miles", err.Error())
+		default:
+			writeStoreError(w, err)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(scenario)
+}
+
 // HandleGetCurrent returns the current default vehicle
 func (s *Server) HandleGetCurrent(w http.ResponseWriter, r *http.Request) {
 	current, err := storeFrom(r.Context()).GetCurrent(r.Context())
