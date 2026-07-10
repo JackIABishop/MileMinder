@@ -5,11 +5,15 @@
 		getCurrentVehicle,
 		getFleet,
 		getGraphData,
+		getScenario,
 		formatNumber,
 		formatDate,
 		type VehicleStatus,
-		type GraphData
+		type GraphData,
+		type Scenario
 	} from '$lib/api';
+	import { formatMoneyMinor } from '$lib/money';
+	import { settings } from '$lib/settings';
 	import { Chart, registerables } from 'chart.js';
 	import 'chartjs-adapter-date-fns';
 
@@ -40,6 +44,16 @@
 	let showProjection = false;
 	let showYears = false;
 	let graphMode: GraphMode = 'single';
+
+	// What-if scenario (issue #9): a read-only projection overlay within single
+	// mode. All the math is server-side (getScenario); this holds only form state
+	// and the last result.
+	let whatIfOpen = false;
+	let scenarioExtraMiles = 600;
+	let scenarioByDate = '';
+	let scenario: Scenario | null = null;
+	let scenarioLoading = false;
+	let scenarioError = '';
 	let compareA = '';
 	let compareB = '';
 	let comparisonLoadToken = 0;
@@ -66,12 +80,43 @@
 			}
 
 			setCompareDefaults(currentID);
+			scenarioByDate = toISODate(new Date(Date.now() + 30 * DAY_MS));
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load data';
 		} finally {
 			loading = false;
 		}
 	});
+
+	// YYYY-MM-DD in the user's local date, for date inputs and API calls.
+	function toISODate(d: Date): string {
+		const tz = d.getTimezoneOffset() * 60000;
+		return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+	}
+
+	async function runScenario() {
+		if (!status?.has_plan) return;
+		scenarioError = '';
+		scenarioLoading = true;
+		try {
+			scenario = await getScenario(status.id, {
+				extra_miles: scenarioExtraMiles,
+				by_date: scenarioByDate
+			});
+		} catch (e) {
+			scenario = null;
+			scenarioError = e instanceof Error ? e.message : 'Failed to run scenario';
+		} finally {
+			scenarioLoading = false;
+			renderSingleChart();
+		}
+	}
+
+	function clearScenario() {
+		scenario = null;
+		scenarioError = '';
+		renderSingleChart();
+	}
 
 	$: compareSeries = buildCompareSeries(compareA, compareB, fleet, compareGraphData);
 	$: compareReady = compareSeries.length === 2;
@@ -125,7 +170,8 @@
 	}
 
 	function displayName(status: VehicleStatus): string {
-		return status.vehicle || status.id;
+		const name = status.vehicle || status.id;
+		return status.registration ? `${name} (${status.registration})` : name;
 	}
 
 	function setCompareDefaults(preferredID = '') {
@@ -160,6 +206,8 @@
 		graphMode = next;
 		destroyChart();
 		if (next === 'compare') {
+			scenario = null;
+			scenarioError = '';
 			await tick();
 			await loadComparison();
 		}
@@ -283,7 +331,12 @@
 		const annual = status.annual_allowance;
 
 		// Right edge of the time axis: today, or the plan end when projecting.
-		const axisMax = status.has_plan && showProjection ? end : today;
+		// A pending what-if scenario extends the axis to its target date.
+		let axisMax = status.has_plan && showProjection ? end : today;
+		if (scenario) {
+			const byDate = new Date(scenario.by_date);
+			if (byDate.getTime() > axisMax.getTime()) axisMax = byDate;
+		}
 
 		// Allowance-year intervals (start → start+1yr …), capped at the plan end.
 		const yearIntervals: { start: number; end: number; index: number }[] = [];
@@ -398,6 +451,28 @@
 				borderColor: status.projected_over ? '#ef4444' : '#f59e0b',
 				backgroundColor: 'transparent',
 				borderDash: [3, 3],
+				pointRadius: 0,
+				pointHoverRadius: 4
+			});
+		}
+
+		// What-if overlay: a straight dashed line from the latest reading to the
+		// hypothetical position at by_date. The y-axis is miles-since-start, so the
+		// endpoint subtracts start_miles (matching the graph's actuals baseline).
+		if (scenario && graphData.dates.length > 0) {
+			const lastDate = new Date(graphData.dates[graphData.dates.length - 1]);
+			const lastY = graphData.actuals[graphData.actuals.length - 1];
+			const fromMs = lastDate.getTime();
+			const byMs = new Date(scenario.by_date).getTime();
+			const endY = scenario.hypothetical_miles - status.start_miles;
+			datasets.push({
+				label: 'What-if scenario',
+				data: sampleLine(fromMs, byMs, (ms) =>
+					byMs > fromMs ? lastY + ((endY - lastY) * (ms - fromMs)) / (byMs - fromMs) : endY
+				),
+				borderColor: '#a855f7',
+				backgroundColor: 'transparent',
+				borderDash: [6, 4],
 				pointRadius: 0,
 				pointHoverRadius: 4
 			});
@@ -789,6 +864,115 @@
 					<canvas bind:this={chartCanvas}></canvas>
 				</div>
 			</div>
+
+			<!-- What-if scenario (only meaningful against an allowance) -->
+			{#if status.has_plan}
+				<div class="card animate-slide-up stagger-2 mt-6">
+					<button
+						class="flex w-full items-center justify-between text-left"
+						on:click={() => (whatIfOpen = !whatIfOpen)}
+						aria-expanded={whatIfOpen}
+					>
+						<div>
+							<h2 class="text-lg font-semibold text-carbon-100">What if?</h2>
+							<p class="text-sm text-carbon-500">
+								See where an extra trip puts you against your allowance — nothing is saved.
+							</p>
+						</div>
+						<span class="text-carbon-400 text-xl">{whatIfOpen ? '−' : '+'}</span>
+					</button>
+
+					{#if whatIfOpen}
+						<div class="mt-4 border-t border-carbon-700 pt-4">
+							<div class="flex flex-col gap-4 sm:flex-row sm:items-end">
+								<div class="flex-1 min-w-0">
+									<label class="label" for="scenario-miles">Extra miles</label>
+									<input
+										id="scenario-miles"
+										type="number"
+										min="0"
+										step="1"
+										class="input"
+										bind:value={scenarioExtraMiles}
+									/>
+								</div>
+								<div class="flex-1 min-w-0">
+									<label class="label" for="scenario-date">By date</label>
+									<input
+										id="scenario-date"
+										type="date"
+										class="input"
+										min={toISODate(new Date(Date.now() + DAY_MS))}
+										max={toISODate(new Date(status.plan_end))}
+										bind:value={scenarioByDate}
+									/>
+								</div>
+								<div class="flex gap-2">
+									<button class="btn-primary" on:click={runScenario} disabled={scenarioLoading}>
+										{scenarioLoading ? 'Calculating…' : 'Run scenario'}
+									</button>
+									{#if scenario}
+										<button class="btn-secondary" on:click={clearScenario}>Clear</button>
+									{/if}
+								</div>
+							</div>
+
+							{#if scenarioError}
+								<p class="mt-4 text-sm text-gauge-red">{scenarioError}</p>
+							{/if}
+
+							{#if scenario}
+								<div class="mt-5">
+									<p class="text-sm text-carbon-500 mb-3">
+										As of {formatDate(scenario.by_date)}, driving
+										{formatNumber(Math.round(scenario.extra_miles))} extra miles:
+									</p>
+									<div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+										<div class="text-center">
+											<p class="text-sm text-carbon-400 mb-1">Projected odometer</p>
+											<p class="text-xl font-mono font-bold text-carbon-100">
+												{formatNumber(Math.round(scenario.hypothetical_miles))} mi
+											</p>
+											<p class="text-xs text-carbon-500 mt-1">
+												trajectory alone: {formatNumber(Math.round(scenario.baseline_miles))} mi
+											</p>
+										</div>
+										<div class="text-center">
+											<p class="text-sm text-carbon-400 mb-1">Vs allowance</p>
+											<p class="text-xl font-mono font-bold {scenario.status.delta <= 0 ? 'text-gauge-green' : 'text-gauge-red'}">
+												{scenario.status.delta > 0 ? '+' : ''}{formatNumber(Math.round(scenario.status.delta))} mi
+											</p>
+											<p class="text-xs text-carbon-500 mt-1">
+												{scenario.status.delta <= 0 ? 'under the line' : 'over the line'}
+											</p>
+										</div>
+										<div class="text-center">
+											<p class="text-sm text-carbon-400 mb-1">Allowance used</p>
+											<p class="text-xl font-mono font-bold text-carbon-100">
+												{formatNumber(scenario.status.percent_used, 0)}%
+											</p>
+										</div>
+										<div class="text-center">
+											<p class="text-sm text-carbon-400 mb-1">Projected overage</p>
+											{#if scenario.status.projected_over && (scenario.status.excess_rate ?? 0) > 0}
+												<p class="text-xl font-mono font-bold text-gauge-red">
+													{formatMoneyMinor(scenario.status.projected_overage_cost_minor ?? 0, $settings.currency)}
+												</p>
+												<p class="text-xs text-carbon-500 mt-1">assuming this pace continues</p>
+											{:else if scenario.status.projected_over}
+												<p class="text-xl font-mono font-bold text-gauge-red">On track to exceed</p>
+												<p class="text-xs text-carbon-500 mt-1">assuming this pace continues</p>
+											{:else}
+												<p class="text-xl font-mono font-bold text-gauge-green">Within allowance</p>
+											{/if}
+										</div>
+									</div>
+								</div>
+							{/if}
+						</div>
+					{/if}
+				</div>
+			{/if}
 
 			<!-- Stats Summary -->
 			<div class="grid {status.has_plan ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'} gap-4 mt-6">

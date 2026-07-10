@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jackiabishop/mileminder/internal/model"
 	"github.com/jackiabishop/mileminder/internal/storage"
 )
 
@@ -58,6 +59,24 @@ func RunTenantIsolation(t *testing.T, newTenants func(t *testing.T) storage.Tena
 		}
 		if cur != "" {
 			t.Fatalf("bob sees alice's current pointer: %q", cur)
+		}
+	})
+
+	t.Run("SettingsAreOwnerPrivate", func(t *testing.T) {
+		tn := newTenants(t)
+		alice := tn.ForUser("alice")
+		bob := tn.ForUser("bob")
+
+		if err := alice.SaveSettings(ctx, &model.Settings{Currency: "EUR", DistanceUnit: "mi"}); err != nil {
+			t.Fatalf("alice SaveSettings: %v", err)
+		}
+
+		got, err := bob.GetSettings(ctx)
+		if err != nil {
+			t.Fatalf("bob GetSettings: %v", err)
+		}
+		if want := model.DefaultSettings(); *got != want {
+			t.Fatalf("bob sees alice's settings: %+v", *got)
 		}
 	})
 

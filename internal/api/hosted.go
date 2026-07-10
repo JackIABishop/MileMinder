@@ -27,6 +27,10 @@ type HostedConfig struct {
 
 	AlertPrefs alerts.PrefsStore
 
+	// Reminders, when set, enables the per-vehicle reading-reminder settings
+	// endpoints. Nil leaves them unregistered.
+	Reminders alerts.ReminderSettingsStore
+
 	// SecureCookies sets the Secure flag on session cookies. True in real hosted
 	// deployments (TLS terminated at the edge); left false for plain-HTTP tests.
 	SecureCookies bool
@@ -108,6 +112,11 @@ func hostedMux(cfg HostedConfig) *http.ServeMux {
 		alertsAPI := &alertPrefsAPI{prefs: cfg.AlertPrefs}
 		mux.Handle("GET /api/v1/alerts/prefs", sess(http.HandlerFunc(alertsAPI.HandleGetPrefs)))
 		mux.Handle("PUT /api/v1/alerts/prefs", sess(http.HandlerFunc(alertsAPI.HandlePutPrefs)))
+	}
+	if cfg.Reminders != nil {
+		reminders := &reminderAPI{settings: cfg.Reminders}
+		mux.Handle("GET /api/v1/vehicles/{id}/reminders", sess(http.HandlerFunc(reminders.HandleGetReminder)))
+		mux.Handle("PUT /api/v1/vehicles/{id}/reminders", sess(http.HandlerFunc(reminders.HandlePutReminder)))
 	}
 	registerDataRoutes(mux, NewServer(), sess)
 

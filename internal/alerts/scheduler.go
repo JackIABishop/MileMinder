@@ -13,7 +13,7 @@ import (
 )
 
 // Scheduler periodically sweeps hosted users, computes vehicle statuses and
-// sends edge-triggered alerts.
+// sends edge-triggered breach alerts plus time-based reading reminders.
 type Scheduler struct {
 	Users    auth.UserStore
 	Tenants  storage.Tenants
@@ -24,6 +24,11 @@ type Scheduler struct {
 	Interval time.Duration
 	BaseURL  string
 	Logger   *log.Logger
+
+	// Reminders and ReminderState drive the reading-reminder pass. Both nil (the
+	// default) disables reminders entirely, leaving breach alerting unchanged.
+	Reminders     ReminderSettingsStore
+	ReminderState ReminderStateStore
 }
 
 // Run executes RunOnce immediately, then on Interval until ctx is cancelled.
@@ -71,33 +76,54 @@ func (s *Scheduler) runUser(ctx context.Context, u *auth.User) {
 		s.logf("alerts: load prefs for user %s: %v", u.ID, err)
 		return
 	}
-	if !prefs.Enabled {
-		return
-	}
 
 	records, err := s.Tenants.ForUser(u.ID).ListVehicles(ctx)
 	if err != nil {
 		s.logf("alerts: list vehicles for user %s: %v", u.ID, err)
 		return
 	}
+	now := s.now()
+	remindersOn := s.Reminders != nil && s.ReminderState != nil
 	keep := make([]string, 0, len(records))
 	for _, rec := range records {
 		keep = append(keep, rec.ID)
-		s.runVehicle(ctx, u, prefs, rec)
+		if rec.Data == nil {
+			continue
+		}
+		// Status is the single source of truth for both passes; compute it once.
+		status := calc.ComputeStatusAt(rec.ID, rec.Data, now)
+		if prefs.Enabled {
+			s.runVehicle(ctx, u, prefs, rec, status, now)
+		}
+		if remindersOn {
+			s.runReminder(ctx, u, rec, status, now)
+		}
 	}
 	if pruner, ok := s.State.(PruningStateStore); ok {
 		if err := pruner.PruneUserStates(ctx, u.ID, keep); err != nil {
 			s.logf("alerts: prune states for user %s: %v", u.ID, err)
 		}
 	}
+	if remindersOn {
+		// Prune only derived reminder state, never user-configured settings.
+		// keep is built from ListVehicles, which deliberately skips unreadable or
+		// unparseable vehicle files (see yamlstore.ListVehicles); pruning settings
+		// against it would let a transient read/parse glitch silently and
+		// permanently delete a user's reminder config for a vehicle that still
+		// exists. Losing derived state (last_reminded_at) self-heals — at worst one
+		// duplicate reminder — so it is safe to prune here. Settings cleanup belongs
+		// on an explicit vehicle-delete path (none exists in hosted mode yet);
+		// PruneUserReminders stays on the store for that future use.
+		if err := s.ReminderState.PruneUserReminderStates(ctx, u.ID, keep); err != nil {
+			s.logf("alerts: prune reminder states for user %s: %v", u.ID, err)
+		}
+	}
 }
 
-func (s *Scheduler) runVehicle(ctx context.Context, u *auth.User, prefs *Prefs, rec storage.Record) {
-	if rec.Data == nil || !rec.Data.HasPlan() {
+func (s *Scheduler) runVehicle(ctx context.Context, u *auth.User, prefs *Prefs, rec storage.Record, status calc.Status, now time.Time) {
+	if !rec.Data.HasPlan() {
 		return
 	}
-	now := s.now()
-	status := calc.ComputeStatusAt(rec.ID, rec.Data, now)
 	breach := calc.EvaluateBreach(status, prefs.Threshold)
 	isBreached := breach.Breached()
 
@@ -138,6 +164,75 @@ func (s *Scheduler) runVehicle(ctx context.Context, u *auth.User, prefs *Prefs, 
 		if err := s.State.PutState(ctx, *prev); err != nil {
 			s.logf("alerts: persist clear state for user %s vehicle %s: %v", u.ID, rec.ID, err)
 		}
+	}
+}
+
+// runReminder sends a time-based reading reminder when the vehicle has not been
+// logged within the configured interval. Unlike breach alerts it is not
+// edge-triggered: as long as the reading stays stale it re-fires once per
+// interval, anchored on the later of the last reading and the last reminder.
+func (s *Scheduler) runReminder(ctx context.Context, u *auth.User, rec storage.Record, status calc.Status, now time.Time) {
+	settings, err := s.Reminders.GetReminder(ctx, u.ID, rec.ID)
+	if errors.Is(err, ErrNotFound) {
+		return // unconfigured vehicles default to reminders off
+	}
+	if err != nil {
+		s.logf("alerts: load reminder for user %s vehicle %s: %v", u.ID, rec.ID, err)
+		return
+	}
+	if !settings.Enabled {
+		return
+	}
+	interval := settings.IntervalDays()
+	if interval <= 0 {
+		s.logf("alerts: invalid reminder interval for user %s vehicle %s: frequency=%q", u.ID, rec.ID, settings.Frequency)
+		return
+	}
+
+	// Baseline is the last logged reading; a policy vehicle with no readings
+	// falls back to its plan start, and a plain vehicle with no readings has
+	// nothing to anchor on and is skipped.
+	var readingDate time.Time
+	if status.LatestDate != "" {
+		t, perr := time.Parse("2006-01-02", status.LatestDate)
+		if perr != nil {
+			s.logf("alerts: parse latest date for user %s vehicle %s: %v", u.ID, rec.ID, perr)
+			return
+		}
+		readingDate = t
+	} else if rec.Data.HasPlan() {
+		readingDate = rec.Data.Plan.Start
+	} else {
+		return
+	}
+
+	// Trigger on the later of the reading baseline and the last reminder we sent,
+	// so a fresh reading or a just-sent reminder both reset the countdown.
+	triggerFrom := readingDate
+	state, err := s.ReminderState.GetReminderState(ctx, u.ID, rec.ID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		s.logf("alerts: load reminder state for user %s vehicle %s: %v", u.ID, rec.ID, err)
+		return
+	}
+	if state != nil && state.LastRemindedAt.After(triggerFrom) {
+		triggerFrom = state.LastRemindedAt
+	}
+	if now.Sub(triggerFrom) < time.Duration(interval)*24*time.Hour {
+		return
+	}
+
+	daysSince := int(now.Sub(readingDate).Hours() / 24)
+	msg, err := RenderReminderMessage(status, daysSince, s.BaseURL)
+	if err != nil {
+		s.logf("alerts: render reminder for user %s vehicle %s: %v", u.ID, rec.ID, err)
+		return
+	}
+	if err := s.Channel.Send(ctx, notify.Recipient{Email: u.Email}, msg); err != nil {
+		s.logf("alerts: send reminder for user %s vehicle %s: %v", u.ID, rec.ID, err)
+		return
+	}
+	if err := s.ReminderState.PutReminderState(ctx, VehicleReminderState{UserID: u.ID, VehicleID: rec.ID, LastRemindedAt: now}); err != nil {
+		s.logf("alerts: persist reminder state for user %s vehicle %s: %v", u.ID, rec.ID, err)
 	}
 }
 

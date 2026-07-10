@@ -139,7 +139,7 @@ var initCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().StringP("car", "c", "", "Vehicle ID")
-	initCmd.Flags().Int("excess-rate", 0, "Excess mileage penalty in pence per mile over allowance (optional)")
+	initCmd.Flags().Int("excess-rate", 0, "Excess mileage penalty in currency minor units (e.g. pence) per mile over allowance (optional)")
 	initCmd.Flags().Bool("no-plan", false, "Create a plan-less mileage tracker")
 	initCmd.Flags().String("import", "", "CSV file of historical readings to import after creating the vehicle")
 }

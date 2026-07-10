@@ -80,6 +80,8 @@ func (e errStore) PutReading(context.Context, string, string, int) error        
 func (e errStore) DeleteReading(context.Context, string, string) error           { return e.err() }
 func (e errStore) GetCurrent(context.Context) (string, error)                    { return "", e.err() }
 func (e errStore) SetCurrent(context.Context, string) error                      { return e.err() }
+func (e errStore) GetSettings(context.Context) (*model.Settings, error)          { return nil, e.err() }
+func (e errStore) SaveSettings(context.Context, *model.Settings) error           { return e.err() }
 
 // Compile-time assertions.
 var (

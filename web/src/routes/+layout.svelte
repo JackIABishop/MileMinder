@@ -2,21 +2,33 @@
 	import '../app.css';
 	import { page } from '$app/stores';
 	import { afterNavigate, goto } from '$app/navigation';
+	import { browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import { listVehicles, getCurrentVehicle, setCurrentVehicle, type VehicleListItem } from '$lib/api';
 	import { initAuth, mode, user, authReady } from '$lib/auth';
+	import { loadSettings } from '$lib/settings';
+
+	if (browser) {
+		// Registers the generated service worker so the app shell is cached for
+		// instant repeat loads. No-op in dev (devOptions.enabled: false).
+		import('virtual:pwa-register/svelte').then(({ useRegisterSW }) => useRegisterSW());
+	}
 
 	let vehicles: VehicleListItem[] = [];
 	let currentVehicle: string = '';
 	let showVehicleMenu = false;
 	let mobileDrawerOpen = false;
 	const authRoutes = new Set(['/login', '/forgot', '/reset']);
+	// Quick-add is a fast one-tap entry form (reachable from the PWA home-screen
+	// icon/shortcut) and stays auth-gated but skips the sidebar/header chrome.
+	const bareRoutes = new Set(['/quick-add']);
 
 	// Auth pages render bare (no sidebar). In hosted mode an unauthenticated
 	// visitor is bounced to login; single-user mode never shows any of this.
 	$: isAuthRoute = authRoutes.has($page.url.pathname);
+	$: isBareRoute = bareRoutes.has($page.url.pathname);
 	$: needsLogin = $mode === 'hosted' && !$user;
-	$: showChrome = $authReady && !isAuthRoute && !needsLogin;
+	$: showChrome = $authReady && !isAuthRoute && !isBareRoute && !needsLogin;
 
 	onMount(async () => {
 		await initAuth();
@@ -24,7 +36,10 @@
 			goto('/login');
 			return;
 		}
-		if (!needsLogin) await loadVehicles();
+		if (!needsLogin) {
+			loadSettings();
+			await loadVehicles();
+		}
 	});
 
 	async function loadVehicles() {
@@ -77,6 +92,8 @@
 	<div class="min-h-screen flex items-center justify-center text-carbon-500">Loading…</div>
 {:else if needsLogin}
 	<div class="min-h-screen flex items-center justify-center text-carbon-500">Redirecting to sign in…</div>
+{:else if isBareRoute}
+	<slot />
 {:else}
 <div class="min-h-screen overflow-x-hidden md:flex">
 	<!-- Mobile Header -->
@@ -89,7 +106,7 @@
 			</div>
 			<div class="min-w-0">
 				<p class="font-display text-base font-bold text-carbon-100">MileMinder</p>
-				<p class="truncate text-xs text-carbon-500">{currentVehicleData?.vehicle || currentVehicle || 'Select vehicle'}</p>
+				<p class="truncate text-xs text-carbon-500">{currentVehicleData?.vehicle || currentVehicle || 'Select vehicle'}{currentVehicleData?.registration ? ` · ${currentVehicleData.registration}` : ''}</p>
 			</div>
 		</div>
 		<button
@@ -151,7 +168,7 @@
 							</div>
 							<div class="min-w-0 text-left">
 								<p class="truncate text-sm font-medium text-carbon-100">{currentVehicleData?.vehicle || currentVehicle || 'Select vehicle'}</p>
-								<p class="truncate text-xs text-carbon-500">{currentVehicle}</p>
+								<p class="truncate text-xs text-carbon-500">{currentVehicleData?.registration || currentVehicle}</p>
 							</div>
 						</div>
 						<svg class="h-4 w-4 shrink-0 text-carbon-400 transition-transform" class:rotate-180={showVehicleMenu} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -167,7 +184,7 @@
 									class:text-accent-primary={vehicle.id === currentVehicle}
 									on:click|stopPropagation={() => switchVehicle(vehicle.id)}
 								>
-									<span class="min-w-0 truncate">{vehicle.vehicle || vehicle.id}</span>
+									<span class="min-w-0 truncate">{vehicle.vehicle || vehicle.id}{#if vehicle.registration}<span class="text-carbon-500"> · {vehicle.registration}</span>{/if}</span>
 									{#if vehicle.id === currentVehicle}
 										<svg class="h-4 w-4 shrink-0" fill="currentColor" viewBox="0 0 24 24">
 											<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
@@ -256,7 +273,7 @@
 					</div>
 					<div class="text-left">
 						<p class="text-sm font-medium text-carbon-100">{currentVehicleData?.vehicle || currentVehicle || 'Select vehicle'}</p>
-						<p class="text-xs text-carbon-500">{currentVehicle}</p>
+						<p class="text-xs text-carbon-500">{currentVehicleData?.registration || currentVehicle}</p>
 					</div>
 				</div>
 				<svg class="w-4 h-4 text-carbon-400 transition-transform" class:rotate-180={showVehicleMenu} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -272,7 +289,7 @@
 							class:text-accent-primary={vehicle.id === currentVehicle}
 							on:click|stopPropagation={() => switchVehicle(vehicle.id)}
 						>
-							<span>{vehicle.vehicle || vehicle.id}</span>
+							<span>{vehicle.vehicle || vehicle.id}{#if vehicle.registration}<span class="text-carbon-500"> · {vehicle.registration}</span>{/if}</span>
 							{#if vehicle.id === currentVehicle}
 								<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
 									<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>

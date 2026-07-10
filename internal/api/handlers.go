@@ -56,20 +56,20 @@ func writeValidationErrorDetails(w http.ResponseWriter, code, message string, de
 	})
 }
 
-type wholePence int
+type wholeMinorUnit int
 
-func (p *wholePence) UnmarshalJSON(b []byte) error {
+func (p *wholeMinorUnit) UnmarshalJSON(b []byte) error {
 	if string(b) == "null" {
 		return nil
 	}
 	f, err := strconv.ParseFloat(string(b), 64)
 	if err != nil {
-		return errors.New("excess_rate must be a whole number of pence")
+		return errors.New("excess_rate must be a whole number of currency minor units (e.g. pence, cents)")
 	}
 	if math.IsNaN(f) || math.IsInf(f, 0) || math.Trunc(f) != f {
-		return errors.New("excess_rate must be a whole number of pence")
+		return errors.New("excess_rate must be a whole number of currency minor units (e.g. pence, cents)")
 	}
-	*p = wholePence(f)
+	*p = wholeMinorUnit(f)
 	return nil
 }
 
@@ -86,9 +86,10 @@ func writeStoreError(w http.ResponseWriter, err error) {
 
 // VehicleListItem represents a vehicle in the list response
 type VehicleListItem struct {
-	ID        string `json:"id"`
-	Vehicle   string `json:"vehicle"`
-	IsDefault bool   `json:"is_default"`
+	ID           string `json:"id"`
+	Vehicle      string `json:"vehicle"`
+	Registration string `json:"registration,omitempty"`
+	IsDefault    bool   `json:"is_default"`
 }
 
 // VehicleStatus is the computed status for a vehicle. The canonical type and
@@ -117,9 +118,10 @@ type GraphData struct {
 }
 
 type VehicleProfile struct {
-	ID      string              `json:"id"`
-	Vehicle string              `json:"vehicle"`
-	Plan    *VehicleProfilePlan `json:"plan,omitempty"`
+	ID           string              `json:"id"`
+	Vehicle      string              `json:"vehicle"`
+	Registration string              `json:"registration,omitempty"`
+	Plan         *VehicleProfilePlan `json:"plan,omitempty"`
 }
 
 type VehicleProfilePlan struct {
@@ -147,9 +149,10 @@ func (s *Server) HandleListVehicles(w http.ResponseWriter, r *http.Request) {
 	vehicles := []VehicleListItem{}
 	for _, rec := range records {
 		vehicles = append(vehicles, VehicleListItem{
-			ID:        rec.ID,
-			Vehicle:   rec.Data.Vehicle,
-			IsDefault: rec.ID == defaultID,
+			ID:           rec.ID,
+			Vehicle:      rec.Data.Vehicle,
+			Registration: rec.Data.Registration,
+			IsDefault:    rec.ID == defaultID,
 		})
 	}
 
@@ -201,8 +204,9 @@ func (s *Server) HandleExportProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	profile := VehicleProfile{
-		ID:      id,
-		Vehicle: data.Vehicle,
+		ID:           id,
+		Vehicle:      data.Vehicle,
+		Registration: data.Registration,
 	}
 	if data.Plan != nil {
 		profile.Plan = &VehicleProfilePlan{
@@ -225,17 +229,18 @@ func (s *Server) HandleExportProfile(w http.ResponseWriter, r *http.Request) {
 // saving to avoid replacing a vehicle's plan and readings.
 func (s *Server) HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID              string     `json:"id"`
-		Vehicle         string     `json:"vehicle"`
-		StartDate       string     `json:"start_date"`
-		EndDate         string     `json:"end_date"`
-		AnnualAllowance *int       `json:"annual_allowance"`
-		StartMiles      int        `json:"start_miles"`
-		ExcessRate      wholePence `json:"excess_rate"`
+		ID              string         `json:"id"`
+		Vehicle         string         `json:"vehicle"`
+		Registration    string         `json:"registration"`
+		StartDate       string         `json:"start_date"`
+		EndDate         string         `json:"end_date"`
+		AnnualAllowance *int           `json:"annual_allowance"`
+		StartMiles      int            `json:"start_miles"`
+		ExcessRate      wholeMinorUnit `json:"excess_rate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		if strings.Contains(err.Error(), "excess_rate") {
-			writeValidationError(w, "invalid_excess_rate", "excess_rate must be a whole number of pence")
+			writeValidationError(w, "invalid_excess_rate", "excess_rate must be a whole number of currency minor units (e.g. pence, cents)")
 		} else {
 			writeValidationError(w, "invalid_json", err.Error())
 		}
@@ -262,7 +267,8 @@ func (s *Server) HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := &model.VehicleData{
-		Vehicle: req.Vehicle,
+		Vehicle:      req.Vehicle,
+		Registration: strings.TrimSpace(req.Registration),
 		Readings: map[string]int{
 			req.StartDate: req.StartMiles,
 		},
@@ -308,11 +314,12 @@ func (s *Server) HandleCreateVehicle(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "created", "id": req.ID})
 }
 
-// HandleUpdatePlan applies a partial update to a vehicle's plan. Only the fields
-// present in the request body are changed; everything else is preserved. Today
-// this exists primarily so an excess_rate can be set on a vehicle that already
-// exists (it can't only be settable at creation time).
-func (s *Server) HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
+// HandleUpdateVehicle applies a partial update to a vehicle: its identity
+// fields (display name, registration) and/or its plan. Only the fields present
+// in the request body are changed; everything else is preserved. Identity
+// fields apply independently of the plan, so a registration-only PATCH works
+// on a plan-less vehicle.
+func (s *Server) HandleUpdateVehicle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "vehicle ID required", http.StatusBadRequest)
@@ -322,15 +329,17 @@ func (s *Server) HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
 	// Pointer fields so an omitted key leaves the existing value untouched
 	// (rather than zeroing it).
 	var req struct {
-		ExcessRate      *wholePence `json:"excess_rate"`
-		StartDate       *string     `json:"start_date"`
-		EndDate         *string     `json:"end_date"`
-		AnnualAllowance *int        `json:"annual_allowance"`
-		StartMiles      *int        `json:"start_miles"`
+		Vehicle         *string         `json:"vehicle"`
+		Registration    *string         `json:"registration"`
+		ExcessRate      *wholeMinorUnit `json:"excess_rate"`
+		StartDate       *string         `json:"start_date"`
+		EndDate         *string         `json:"end_date"`
+		AnnualAllowance *int            `json:"annual_allowance"`
+		StartMiles      *int            `json:"start_miles"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		if strings.Contains(err.Error(), "excess_rate") {
-			writeValidationError(w, "invalid_excess_rate", "excess_rate must be a whole number of pence")
+			writeValidationError(w, "invalid_excess_rate", "excess_rate must be a whole number of currency minor units (e.g. pence, cents)")
 		} else {
 			writeValidationError(w, "invalid_json", err.Error())
 		}
@@ -341,6 +350,14 @@ func (s *Server) HandleUpdatePlan(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+
+	// Identity fields first, independent of any plan logic below.
+	if req.Vehicle != nil {
+		data.Vehicle = strings.TrimSpace(*req.Vehicle)
+	}
+	if req.Registration != nil {
+		data.Registration = strings.TrimSpace(*req.Registration)
 	}
 
 	hasConversionFields := req.StartDate != nil || req.EndDate != nil || req.AnnualAllowance != nil || req.StartMiles != nil
@@ -534,6 +551,66 @@ func (s *Server) HandleGetGraphData(w http.ResponseWriter, r *http.Request) {
 		Actuals: actuals,
 		Ideals:  ideals,
 	})
+}
+
+// HandleVehicleScenario runs a read-only what-if projection: "if I drive
+// extra_miles on top of my normal pace by by_date, where do I land relative to
+// my allowance?". It loads the vehicle, builds a hypothetical copy in memory
+// (calc.ComputeScenario never mutates the input) and returns the resulting
+// status. It never writes to the store — that is the whole safety property of
+// the feature, so there is deliberately no Save/PutReading call in this handler.
+func (s *Server) HandleVehicleScenario(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "vehicle ID required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		ExtraMiles *float64 `json:"extra_miles"`
+		ByDate     string   `json:"by_date"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeValidationError(w, "invalid_json", err.Error())
+		return
+	}
+	if req.ExtraMiles == nil {
+		writeValidationError(w, "missing_extra_miles", "extra_miles is required")
+		return
+	}
+	byDate, err := time.Parse("2006-01-02", req.ByDate)
+	if err != nil {
+		writeValidationError(w, "invalid_by_date", "by_date must be a YYYY-MM-DD date")
+		return
+	}
+
+	data, err := storeFrom(r.Context()).GetVehicle(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	scenario, err := calc.ComputeScenario(id, data, *req.ExtraMiles, byDate)
+	if err != nil {
+		switch {
+		case errors.Is(err, calc.ErrScenarioNoPlan):
+			writeValidationError(w, "vehicle_has_no_plan", err.Error())
+		case errors.Is(err, calc.ErrScenarioNoReadings):
+			writeValidationError(w, "no_readings", err.Error())
+		case errors.Is(err, calc.ErrScenarioDateNotFuture):
+			writeValidationError(w, "by_date_not_future", err.Error())
+		case errors.Is(err, calc.ErrScenarioAfterPlanEnd):
+			writeValidationError(w, "by_date_after_plan_end", err.Error())
+		case errors.Is(err, calc.ErrScenarioNegativeMiles):
+			writeValidationError(w, "invalid_extra_miles", err.Error())
+		default:
+			writeStoreError(w, err)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(scenario)
 }
 
 // HandleGetCurrent returns the current default vehicle

@@ -170,7 +170,7 @@
 							<h3 class="font-semibold text-lg text-carbon-100 truncate">
 								{vehicle.vehicle || vehicle.id}
 							</h3>
-							<p class="text-sm text-carbon-500">{vehicle.id}</p>
+							<p class="text-sm text-carbon-500">{vehicle.registration ? `${vehicle.registration} · ${vehicle.id}` : vehicle.id}</p>
 
 							<div class="mt-3 space-y-1">
 								<div class="flex justify-between text-sm">

@@ -16,6 +16,7 @@ type Memory struct {
 	mu       sync.RWMutex
 	vehicles map[string]*model.VehicleData
 	current  string
+	settings *model.Settings // nil until saved; Get falls back to defaults
 }
 
 // NewMemory returns an empty in-memory Store.
@@ -129,6 +130,31 @@ func (m *Memory) SetCurrent(ctx context.Context, id string) error {
 		return fmt.Errorf("set current %q: %w", id, ErrNotFound)
 	}
 	m.current = id
+	return nil
+}
+
+func (m *Memory) GetSettings(ctx context.Context) (*model.Settings, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	settings := model.DefaultSettings()
+	if m.settings != nil {
+		if m.settings.Currency != "" {
+			settings.Currency = m.settings.Currency
+		}
+		if m.settings.DistanceUnit != "" {
+			settings.DistanceUnit = m.settings.DistanceUnit
+		}
+	}
+	return &settings, nil
+}
+
+func (m *Memory) SaveSettings(ctx context.Context, s *model.Settings) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cp := *s
+	m.settings = &cp
 	return nil
 }
 
