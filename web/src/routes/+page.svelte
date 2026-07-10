@@ -139,11 +139,12 @@
 					subtitle="Budget to date"
 				/>
 				
-				<StatCard 
-					title="Daily Rate" 
-					value={formatNumber(status.daily_rate, 1)} 
+				<StatCard
+					title="Daily Rate"
+					value={formatNumber(status.daily_rate, 1)}
 					unit="mi/day"
 					subtitle="Current pace"
+					tooltip="Average mi/day since this allowance year started. Used to project your year-end total below."
 					color={status.daily_rate > (status.annual_allowance / 365) ? 'amber' : 'green'}
 				/>
 				
@@ -313,11 +314,12 @@
 						unit="mi"
 						subtitle="Last updated {formatDate(status.latest_date)}"
 					/>
-					<StatCard 
-						title="Daily Rate" 
-						value={formatNumber(status.daily_rate, 1)} 
+					<StatCard
+						title="Daily Rate"
+						value={formatNumber(status.daily_rate, 1)}
 						unit="mi/day"
 						subtitle="Lifetime pace"
+						tooltip="Average mi/day since your first recorded reading."
 					/>
 					<div class="sm:col-span-2 card animate-slide-up">
 						<h3 class="text-sm font-medium text-carbon-400 mb-3">Average Annual Mileage</h3>
